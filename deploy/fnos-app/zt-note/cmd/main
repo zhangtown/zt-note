@@ -1,0 +1,110 @@
+#!/bin/sh
+# fnOS app lifecycle for zt-note (云记笔记).
+#
+# The Go binary serves HTTP over a unix socket ($TRIM_APPDEST/app.sock);
+# the fnOS unified gateway proxies /app/zt-note to it. No TCP port is used.
+# User notes live in ${TRIM_PKGVAR}/workspace (see below) — that is the only
+# directory that matters for backups.
+
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+BIN="${TRIM_APPDEST}/bin/ztnote"
+SOCKET_PATH="${TRIM_APPDEST}/app.sock"
+WORKSPACE="${TRIM_PKGVAR}/workspace"
+GATEWAY_PREFIX="/app/zt-note"
+
+log_msg() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+check_process() {
+  kill -0 "$1" 2>/dev/null
+}
+
+status_app() {
+  if [ -f "$PID_FILE" ]; then
+    pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+    if [ -n "$pid" ] && check_process "$pid"; then
+      return 0
+    fi
+    rm -f "$PID_FILE"
+  fi
+  return 1
+}
+
+start_app() {
+  if status_app; then
+    return 0
+  fi
+  mkdir -p "$TRIM_PKGVAR" "$WORKSPACE"
+  if [ ! -x "$BIN" ]; then
+    log_msg "ERROR: binary not found or not executable: $BIN"
+    exit 1
+  fi
+  log_msg "Starting zt-note..."
+  rm -f "$SOCKET_PATH"
+  GATEWAY_PREFIX="$GATEWAY_PREFIX" \
+    "$BIN" -workspace "$WORKSPACE" -sock "$SOCKET_PATH" -prefix "$GATEWAY_PREFIX" \
+    >> "$LOG_FILE" 2>&1 &
+  echo "$!" > "$PID_FILE"
+  # wait for the socket so the gateway can register us
+  i=0
+  while [ ! -S "$SOCKET_PATH" ] && [ "$i" -lt 50 ]; do
+    i=$((i + 1))
+    sleep 0.2
+  done
+  if [ ! -S "$SOCKET_PATH" ]; then
+    log_msg "ERROR: socket not created"
+    exit 1
+  fi
+  chmod 666 "$SOCKET_PATH"
+  log_msg "Started (pid $(cat "$PID_FILE"))"
+}
+
+stop_app() {
+  log_msg "Stopping zt-note..."
+  if [ ! -f "$PID_FILE" ]; then
+    rm -f "$SOCKET_PATH"
+    return 0
+  fi
+  pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+  if [ -z "$pid" ] || ! check_process "$pid"; then
+    rm -f "$PID_FILE"
+    rm -f "$SOCKET_PATH"
+    return 0
+  fi
+  kill -TERM "$pid" 2>> "$LOG_FILE" || true
+  count=0
+  while check_process "$pid" && [ "$count" -lt 10 ]; do
+    sleep 1
+    count=$((count + 1))
+  done
+  if check_process "$pid"; then
+    kill -KILL "$pid" 2>> "$LOG_FILE" || true
+  fi
+  rm -f "$PID_FILE"
+  rm -f "$SOCKET_PATH"
+}
+
+case "$1" in
+  start)
+    start_app
+    ;;
+  stop)
+    stop_app
+    ;;
+  restart)
+    stop_app
+    start_app
+    ;;
+  status)
+    if status_app; then
+      exit 0
+    fi
+    exit 3
+    ;;
+  *)
+    echo "Unknown command: $1" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+    ;;
+esac

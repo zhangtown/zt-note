@@ -1,0 +1,5 @@
+#!/bin/sh
+# 卸载：应用目录由系统清理；${TRIM_PKGVAR}/workspace 里的笔记不会主动删除。
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+echo "$(date '+%Y-%m-%d %H:%M:%S') - uninstall_callback: 笔记数据保留在 ${TRIM_PKGVAR}/workspace" >> "$LOG_FILE" 2>/dev/null
+exit 0

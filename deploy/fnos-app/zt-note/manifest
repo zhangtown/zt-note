@@ -1,0 +1,13 @@
+appname=zt-note
+version=0.1.0
+desc=云记笔记：飞牛上的自托管笔记应用，原生使用思源（SiYuan）文档格式存储。可导入思源工作区或 Markdown 导出包，浏览、编辑、搜索，并随时按思源格式回写导出——导出的 data 目录可直接放回思源打开。走统一网关，不占用额外端口。
+display_name=云记笔记
+maintainer=zhangtown
+platform=x86
+desktop_uidir=ui
+desktop_applaunchname=zt-note.main
+source=thirdparty
+os_min_version=1.1.3100
+ctl_stop=true
+install_type=root
+changelog=0.1.0：首个版本：思源格式（.sy）笔记导入/浏览/编辑/搜索；Markdown 与思源工作区导出（字节级保真，未改动的块原样保留）；统一网关入口（unix socket，无额外端口）。

@@ -1,0 +1,22 @@
+# 构建产物 / 运行产物
+.test/
+.toolchain/
+*.fpk
+*.exe
+
+# 前端
+ui/node_modules/
+ui/dist/
+internal/webui/dist/
+node_modules/
+
+# Go
+*.test
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+*.log
+
+# 打包中间产物（pack.sh 每次重建）
+deploy/fnos-app/zt-note/app/bin/

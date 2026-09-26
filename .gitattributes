@@ -1,0 +1,6 @@
+# 保持 LF：fpk 里的 shell 脚本必须在 Linux 上可执行
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.fpk binary
+*.gz binary

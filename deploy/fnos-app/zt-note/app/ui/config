@@ -1,0 +1,15 @@
+{
+  ".url": {
+    "zt-note.main": {
+      "title": "云记笔记",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/zt-note",
+      "gatewaySocket": "app.sock",
+      "url": "/app/zt-note/",
+      "allUsers": false,
+      "control": { "accessPerm": "readonly" }
+    }
+  }
+}

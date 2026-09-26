@@ -1,0 +1,8 @@
+#!/bin/sh
+# 安装后：准备用户数据目录（笔记工作区），并写一条日志。
+# 笔记数据在 ${TRIM_PKGVAR}/workspace，升级不会覆盖，卸载前请自行备份。
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+mkdir -p "${TRIM_PKGVAR}/workspace" 2>/dev/null
+chmod +x "${TRIM_APPDEST}/bin/ztnote" 2>/dev/null
+echo "$(date '+%Y-%m-%d %H:%M:%S') - install_callback: workspace=${TRIM_PKGVAR}/workspace" >> "$LOG_FILE" 2>/dev/null
+exit 0

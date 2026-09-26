@@ -1,0 +1,8 @@
+#!/bin/sh
+# no-op
+
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') - install_init" >> "$LOG_FILE" 2>/dev/null
+
+exit 0

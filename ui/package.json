@@ -1,0 +1,28 @@
+{
+  "name": "zt-note-ui",
+  "private": true,
+  "version": "1.0.0",
+  "description": "zt-note 前端（Vite + TypeScript + TipTap），构建产物输出到 ../internal/webui/dist",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "postbuild": "node scripts/check-build.mjs",
+    "verify": "node scripts/check-build.mjs",
+    "test:logic": "esbuild scripts/logic-test.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/zt-note/logic-test.mjs --log-level=warning && node node_modules/.cache/zt-note/logic-test.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "check": "npm run build && npm run test:logic && npm run smoke",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tiptap/core": "2.27.3",
+    "@tiptap/extension-image": "2.27.3",
+    "@tiptap/extension-link": "2.27.3",
+    "@tiptap/extension-placeholder": "2.27.3",
+    "@tiptap/starter-kit": "2.27.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  }
+}
