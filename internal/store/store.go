@@ -539,7 +539,9 @@ func (s *Store) Search(q string, limit int) []Hit {
 		}
 		title := siyuan.DocTitle(doc)
 		if strings.Contains(strings.ToLower(title), lower) {
-			hits = append(hits, Hit{Box: ref.Box, ID: ref.ID, Title: title, BlockID: doc.ID, Snippet: title})
+			// 标题命中 = 整篇命中：BlockID 留空，前端据此不做块级定位
+			// （思源的文档 ID 不等于任何块的 data-node-id，填 doc.ID 会让前端定位落空）
+			hits = append(hits, Hit{Box: ref.Box, ID: ref.ID, Title: title, Snippet: title})
 			continue
 		}
 		for _, b := range doc.Children {

@@ -21,6 +21,20 @@
 `blocks[].pm` 为该块的 ProseMirror 节点 JSON（TipTap 顶层节点），`type` 为对应的
 `paragraph|heading|codeBlock|blockquote|bulletList|orderedList|image|thematicBreak|table`。
 
+`html` 字段是后端渲染的阅读视图，**每个顶层块的首个标签带 `data-node-id="<块 ID>"`**
+（`internal/siyuan/render.go` `RenderBlocksHTML` + `withNodeID`）。前端搜索结果定位就靠它
+（`ui/src/views/doc.ts` `highlightBlock` → `[data-node-id=...]`），HTML 导出也带同样的标记。
+
+`hits[].blockId` 的契约（前端据此决定「整篇命中」还是「定位到块」）：
+
+| 命中位置 | `blockId` | 前端行为 |
+|---|---|---|
+| 文档标题（= 整篇命中） | `""`（空串） | 卡片提示「整篇命中，点击打开」，不带 `?block=`、不做块级高亮 |
+| 正文块 | 该块的块 ID（必是文档内真实存在的块） | 卡片提示「定位到块 <id>」，跳转带 `?block=<id>` 并高亮该块 |
+
+注意：思源的文档 ID 不是任何块的 `data-node-id`，所以标题命中**不能**填 `doc.ID`，
+否则前端会定位到一个不存在的块（已由 `.test/e2e.py` 与 `ui/scripts/e2e-live.mjs` 固化断言）。
+
 ## 写入
 
 | 方法 | 路径 | body |

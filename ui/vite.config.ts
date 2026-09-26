@@ -12,7 +12,9 @@ export default defineConfig({
     outDir: '../internal/webui/dist',
     emptyOutDir: true,
     target: 'es2020',
-    assetsDir: 'assets',
+    // 不用 vite 默认的 assets/：该前缀被 fnOS 网关保留（网关会尝试解析 /app/<id>/assets/*），
+    // 用 static/ 避免与网关的资源路由撞车。
+    assetsDir: 'static',
     sourcemap: false,
   },
   server: {
@@ -20,7 +22,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': { target: API_TARGET, changeOrigin: true },
-      '/assets': { target: API_TARGET, changeOrigin: true },
+      // 开发时代理后端静态资源（图片等）
+      '/static': { target: API_TARGET, changeOrigin: true },
     },
   },
 })

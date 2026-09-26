@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 构建自检：确认 dist/index.html 存在，且引用的 js/css 都是相对路径（./assets/...）。
+// 构建自检：确认 dist/index.html 存在，且引用的 js/css 都是相对路径（./static/...）。
 // 用法：npm run build（postbuild 自动执行）或 npm run verify
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -39,7 +39,7 @@ if (!existsSync(indexPath)) {
     if (ref.startsWith('./') || ref.startsWith('../')) {
       ok(`引用是相对路径：${ref}`)
     } else {
-      bad(`引用不是相对路径：${ref}（必须形如 ./assets/xxx）`)
+      bad(`引用不是相对路径：${ref}（必须形如 ./static/xxx）`)
     }
     const file = join(dist, ref.replace(/^\.\//, ''))
     if (existsSync(file)) ok(`引用的文件存在：${ref.replace(/^\.\//, '')}`)
@@ -50,11 +50,13 @@ if (!existsSync(indexPath)) {
   if (absolute.length) bad(`index.html 含绝对路径引用：${absolute.join(', ')}（网关前缀下会 404）`)
   else ok('index.html 无绝对路径引用')
 
-  // 关键资源目录（vite 的 assetsDir）
-  if (existsSync(join(dist, 'assets'))) ok('assets/ 目录存在')
+  // 关键资源目录（vite 的 assetsDir，见 vite.config.ts：必须避开网关保留前缀 assets）
+  if (existsSync(join(dist, 'static'))) ok('static/ 目录存在')
+  else bad('static/ 目录缺失（assetsDir 应为 static，不能用网关保留的 assets）')
+  if (existsSync(join(dist, 'assets'))) bad('产物里出现了 assets/ 目录：该前缀被 fnOS 网关占用，请检查 assetsDir 配置')
 }
 
-// 产物里不应出现指向站点根的绝对 URL（例如 url(/assets/x.png)）
+// 产物里不应出现指向站点根的绝对 URL（例如 url(/static/x.png)）
 function walk(dir) {
   const out = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

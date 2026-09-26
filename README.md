@@ -35,11 +35,10 @@ zt-note 的做法是把保真做成默认路径：
 ## 快速开始（开发）
 
 ```bash
-# 后端（Windows 开发：TCP 直连，无网关前缀）
-go build -o .test/ztnote.exe ./cmd/ztnote
+bash build.sh                       # 建 Windows 开发二进制（前端源码更新时自动重建前端）
 .test/ztnote.exe -workspace .test/workspace -addr 127.0.0.1:8765
 
-# 前端热更新（vite proxy 到 8765）
+# 前端热更新（vite proxy 到 8765），开发时不需要 build.sh
 cd ui && npm ci && npm run dev
 ```
 
@@ -56,12 +55,13 @@ npm run e2e:live           # 真实后端 + 无头浏览器联调
 ## 构建与部署（fnOS）
 
 ```bash
-bash deploy/fnos-app/pack.sh          # 生成图标 → 编译 linux/amd64 → 产出 zt-note.fpk
-bash deploy/fnos-app/pack.sh UI=1     # 顺带先构建前端
+bash build.sh fpk                     # 生成图标 → 编译 linux/amd64 → 产出 zt-note.fpk
+bash build.sh fpk UI=1                # 强制先重建前端
+bash deploy/fnos-app/install.sh       # 打包 + 上传 + 安装/升级 + 验证（NAS 地址见部署文档）
 ```
 
-产物：`deploy/fnos-app/zt-note.fpk`（约 3.4 MB）。安装方式与 NAS 部署步骤见
-[`deploy/README.md`](deploy/README.md)。
+产物：`deploy/fnos-app/zt-note.fpk`（约 3.4 MB）。安装、升级（注意 `install-fpk` 对已装应用
+无效这个坑）与 NAS 部署步骤见 [`deploy/README.md`](deploy/README.md)。
 
 ## 数据与导入
 
@@ -72,6 +72,9 @@ bash deploy/fnos-app/pack.sh UI=1     # 顺带先构建前端
 | 思源工作区目录 | `data/<boxID>/<docID>.sy` + `.siyuan/conf.json`（取笔记本名）+ `data/assets/` |
 | 思源导出 zip | 同上（可带一层 `data/` 前缀） |
 | Markdown | `<笔记本>/<标题>.md` + `assets/`；单个 `.md`（如「全部笔记汇总.md」）按一级标题拆成多篇 |
+
+搜索结果支持块级定位：标题命中打开整篇文档，正文命中会跳转并高亮命中块
+（阅读视图的每个块带 `data-node-id`，见 [`docs/API.md`](docs/API.md) 的 `api/search` 契约）。
 
 导出两种格式：`api/export/siyuan`（`data/<box>/<doc>.sy` + `assets/`，可直接解开覆盖回
 思源工作区）、`api/export/md`。

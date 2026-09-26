@@ -18,12 +18,32 @@ func RenderDocHTML(doc *Node) string {
 }
 
 // RenderBlocksHTML 渲染一组块级节点。
+// 每个顶层块都在第一个标签上带 data-node-id（= .sy 里的块 ID），前端搜索结果定位
+// （ui/src/views/doc.ts highlightBlock 用 [data-node-id=...] 查询）和导出的 HTML 都靠它。
 func RenderBlocksHTML(blocks []*Node) string {
 	var sb strings.Builder
 	for _, b := range blocks {
-		sb.WriteString(RenderBlockHTML(b))
+		sb.WriteString(withNodeID(b.ID, RenderBlockHTML(b)))
 	}
 	return sb.String()
+}
+
+// withNodeID 把 data-node-id 注入到一段块 HTML 的首个开始标签里。
+// 块 ID 一定是安全的十六进制-破折号串，但仍旧转义，避免以后格式变化引入注入。
+func withNodeID(id, blockHTML string) string {
+	if id == "" || blockHTML == "" {
+		return blockHTML
+	}
+	lt := strings.IndexByte(blockHTML, '<')
+	if lt < 0 {
+		return blockHTML
+	}
+	gt := strings.IndexByte(blockHTML[lt:], '>')
+	if gt < 0 {
+		return blockHTML
+	}
+	gt += lt
+	return blockHTML[:gt] + ` data-node-id="` + html.EscapeString(id) + `"` + blockHTML[gt:]
 }
 
 // RenderBlockHTML 渲染单个块级节点。

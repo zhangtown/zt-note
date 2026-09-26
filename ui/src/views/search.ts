@@ -78,7 +78,7 @@ function hitCard(hit: SearchHit, q: string): HTMLElement {
     'div',
     {
       class: 'search-hit',
-      title: hit.blockId ? `定位到块 ${hit.blockId}` : '打开文档',
+      title: hit.blockId ? `定位到块 ${hit.blockId}` : '整篇命中，点击打开',
       onclick: () =>
         navigate({
           name: 'doc',
