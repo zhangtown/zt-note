@@ -7,7 +7,7 @@
 import { getSchema } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
-import Image from '@tiptap/extension-image'
+import { ImageWithLayout } from '../src/image-ext'
 import { isDirty, planSave, sanitizeBlocks, stableStringify } from '../src/docjson'
 import type { Block } from '../src/types'
 
@@ -30,7 +30,7 @@ const schema = getSchema([
     codeBlock: { languageClassPrefix: 'language-', defaultLanguage: null },
   }),
   Link,
-  Image.configure({ inline: true, allowBase64: false }),
+  ImageWithLayout.configure({ inline: true, allowBase64: false }),
 ])
 
 const blocks: Block[] = [
@@ -114,6 +114,119 @@ ok(inserted[1].id === 'b1' && inserted[1].changed === false, '插入后原块仍
 const removed = planSave(s.content.filter((_, i) => i !== 1), s.baseline)
 ok(!removed.some((b) => b.id === 'b2'), '删除的块（b2）不出现在下发列表')
 ok(removed.length === 5, '其余 5 块照常下发', `实际 ${removed.length}`)
+
+console.log('\n6) 图片：排版属性保真 + 未改动不重建')
+// 思源 .sy 里图片的 parent-style（一行几张）/ style（缩放尺寸）要一路带到保存。
+// 编辑器 schema 会把缺失的属性补成默认值 null，基准必须同样补齐，
+// 否则「打开含图片的文档、什么都没改」会被判成已改动，白白重建节点、丢掉原有属性。
+const imgBlocks: Block[] = [
+  {
+    id: 'p1',
+    type: 'paragraph',
+    pm: {
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: '1月' },
+        { type: 'image', attrs: { src: 'assets/a.png', alt: '一月' } },
+      ],
+    },
+  },
+  {
+    id: 'p2',
+    type: 'paragraph',
+    pm: {
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: '2月' },
+        {
+          type: 'image',
+          attrs: { src: 'assets/b.png', alt: '二月', parentStyle: 'width: 25%;', style: 'width: 10000px;' },
+        },
+      ],
+    },
+  },
+]
+const imgSan = sanitizeBlocks(schema, imgBlocks)
+const imgAttrs = (i: number) => (imgSan.baseline[i].pm?.content?.[1]?.attrs ?? {}) as Record<string, unknown>
+const a0 = imgAttrs(0)
+const a1 = imgAttrs(1)
+ok(
+  stableStringify(a0) ===
+    stableStringify({ src: 'assets/a.png', alt: '一月', title: null, parentStyle: null, style: null }),
+  '缺省的图片属性在基准里补齐为 null（与编辑器 schema 一致）',
+  JSON.stringify(a0),
+)
+ok(
+  a1.parentStyle === 'width: 25%;' && a1.style === 'width: 10000px;',
+  'parent-style / style 保留在基准里',
+  JSON.stringify(a1),
+)
+
+// 编辑器 setContent → getJSON 的产物：属性都被物化出来
+const imgEditorJSON = [
+  {
+    type: 'paragraph',
+    content: [
+      { type: 'text', text: '1月' },
+      {
+        type: 'image',
+        attrs: { src: 'assets/a.png', alt: '一月', title: null, parentStyle: null, style: null },
+      },
+    ],
+  },
+  {
+    type: 'paragraph',
+    content: [
+      { type: 'text', text: '2月' },
+      {
+        type: 'image',
+        attrs: {
+          src: 'assets/b.png',
+          alt: '二月',
+          title: null,
+          parentStyle: 'width: 25%;',
+          style: 'width: 10000px;',
+        },
+      },
+    ],
+  },
+]
+const imgPlan = planSave(imgEditorJSON, imgSan.baseline)
+ok(
+  imgPlan.every((b) => b.changed === false),
+  '图片属性齐全时判定为未改动（不重建节点）',
+  JSON.stringify(imgPlan.map((b) => b.changed)),
+)
+
+// 改了所在块的文字 → changed:true，但图片的排版属性要一路带到下发数据里
+const imgEdited = imgEditorJSON.map((n, i) =>
+  i === 1
+    ? {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: '2月（改）' },
+          {
+            type: 'image',
+            attrs: {
+              src: 'assets/b.png',
+              alt: '二月',
+              title: null,
+              parentStyle: 'width: 25%;',
+              style: 'width: 10000px;',
+            },
+          },
+        ],
+      }
+    : n,
+)
+const imgPlan2 = planSave(imgEdited, imgSan.baseline)
+ok(imgPlan2[1].changed === true && imgPlan2[1].id === 'p2', '改动图片所在块：changed:true 且保留原 ID')
+ok(
+  JSON.stringify(imgPlan2[1].pm).includes('width: 25%;'),
+  '下发数据里仍带 parent-style',
+  JSON.stringify(imgPlan2[1].pm),
+)
+ok(imgPlan2[0].changed === false, '同一文档里的其它块不受影响')
 
 console.log(`\n逻辑自测结果：${passed} 项通过，${failed} 项失败`)
 process.exit(failed ? 1 : 0)

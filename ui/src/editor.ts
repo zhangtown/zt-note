@@ -6,6 +6,7 @@ import Image from '@tiptap/extension-image'
 import Placeholder from '@tiptap/extension-placeholder'
 import type { JSONContent } from '@tiptap/core'
 import type { Block, SaveBlock } from './types'
+import { apiUpload } from './api'
 import { isDirty, planSave, sanitizeBlocks, stableStringify } from './docjson'
 import { h, showModal, toast, type ModalButton } from './dom'
 
@@ -14,6 +15,31 @@ const LANGUAGE_SUGGESTIONS = [
   'rust', 'shell', 'bash', 'sql', 'json', 'yaml', 'html', 'css', 'xml',
   'markdown', 'diff', 'php', 'ruby', 'kotlin', 'swift', 'text',
 ]
+
+/**
+ * 图片节点：思源把图片的排版信息放在节点 Properties 里，
+ * parent-style 决定“一行挤几张”（width: 25%），style 决定缩放尺寸。
+ * 声明成额外属性后，改图片所在的块也不会把它们丢掉（保存时后端写回 .sy）。
+ * 用 data-* 落地，避开与 HTML 原生 style 属性重名。
+ */
+const ImageWithLayout = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      parentStyle: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-parent-style'),
+        renderHTML: (attrs) =>
+          attrs.parentStyle ? { 'data-parent-style': attrs.parentStyle } : {},
+      },
+      style: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-style'),
+        renderHTML: (attrs) => (attrs.style ? { 'data-style': attrs.style } : {}),
+      },
+    }
+  },
+})
 
 export interface EditorHandle {
   /** 编辑器整体（含工具条） */
@@ -210,16 +236,23 @@ async function insertImage(editor: Editor): Promise<void> {
   fileInput.addEventListener('change', () => {
     const file = fileInput.files?.[0]
     if (!file) return
-    status.textContent = `上传中… ${file.name}`
-    uploadAsset(file)
+    uploadBtn.disabled = true
+    status.textContent = `上传中… ${file.name} 0%`
+    uploadAsset(file, (percent) => {
+      status.textContent = `上传中… ${file.name} ${percent}%`
+    })
       .then((data) => {
         urlInput.value = data.url
         if (!altInput.value) altInput.value = file.name.replace(/\.[^.]+$/, '')
-        status.textContent = `已上传：${data.url}`
+        status.textContent = `已上传：${data.url}（点「插入」放入正文）`
       })
       .catch((err: unknown) => {
         status.textContent = ''
         toast(err instanceof Error ? err.message : '上传失败', 'error')
+      })
+      .finally(() => {
+        uploadBtn.disabled = false
+        fileInput.value = ''
       })
   })
   const body = h(
@@ -236,7 +269,7 @@ async function insertImage(editor: Editor): Promise<void> {
     h(
       'div',
       { class: 'field-hint' },
-      '相对地址（assets/xxx.png）指服务器 data/assets/；也可直接填外链。',
+      '相对地址（assets/xxx.png）指服务器 data/assets/；也可直接填外链。更快的办法：直接 Ctrl+V 粘贴截图，或把图片文件拖进正文。',
     ),
   )
   const res = await showModal({
@@ -281,13 +314,18 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
     ...LANGUAGE_SUGGESTIONS.map((lang) => h('option', { value: lang })),
   )
 
+  const uploads = h('div', { class: 'zt-uploads' })
   const element = h(
     'div',
     { class: 'zt-editor' },
     toolbar,
+    uploads,
     h('div', { class: 'zt-editor-scroll' }, editorHost),
     foot,
   )
+
+  // 构造 Editor 时还不能拿到实例，但粘贴/拖拽回调一定是构造之后才触发的
+  let editorRef: Editor | null = null
 
   const editor = new Editor({
     element: editorHost,
@@ -304,14 +342,33 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
         linkOnPaste: true,
         HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' },
       }),
-      Image.configure({ inline: true, allowBase64: false, HTMLAttributes: { class: 'zt-image' } }),
+      ImageWithLayout.configure({ inline: true, allowBase64: false, HTMLAttributes: { class: 'zt-image' } }),
       Placeholder.configure({ placeholder: '开始输入…' }),
     ],
     content: { type: 'doc', content: [] },
     editorProps: {
       attributes: { class: 'tiptap prose', spellcheck: 'false' },
+      // 截图直接 Ctrl+V：拦截剪贴板里的图片文件，上传后插到光标处
+      handlePaste: (view, event) => {
+        const files = imageFilesFrom(event.clipboardData)
+        if (!files.length || !editorRef) return false
+        event.preventDefault()
+        void uploadImagesAt(editorRef, view.state.selection.from, files, uploads)
+        return true
+      },
+      // 拖入图片文件
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved) return false
+        const files = imageFilesFrom(event.dataTransfer)
+        if (!files.length || !editorRef) return false
+        event.preventDefault()
+        const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+        void uploadImagesAt(editorRef, at ?? view.state.selection.from, files, uploads)
+        return true
+      },
     },
   })
+  editorRef = editor
 
   // 用编辑器 schema 归一化后端给的 pm 节点，再灌进编辑器（避免未知节点导致崩溃）
   const sanitized = sanitizeBlocks(editor.schema, opts.blocks)
@@ -408,18 +465,80 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
   }
 }
 
-/** 上传图片到服务器 data/assets/（POST api/assets/upload）。 */
-export function uploadAsset(file: File): Promise<{ name: string; url: string }> {
-  return new Promise((resolve, reject) => {
-    const form = new FormData()
-    form.append('file', file, file.name)
-    fetch('api/assets/upload', { method: 'POST', body: form })
-      .then(async (res) => {
-        const text = await res.text()
-        const data = text ? (JSON.parse(text) as { ok?: boolean; name?: string; url?: string; error?: string }) : {}
-        if (!res.ok || data.ok === false) throw new Error(data.error || `上传失败（HTTP ${res.status}）`)
-        resolve({ name: data.name ?? file.name, url: data.url ?? '' })
+/** 从剪贴板 / 拖拽事件里挑出图片文件。 */
+function imageFilesFrom(dt: DataTransfer | null): File[] {
+  if (!dt) return []
+  return Array.from(dt.files ?? []).filter((f) => f.type.startsWith('image/'))
+}
+
+/** 上传进度条（一行一条，粘多张图时依次排队）。 */
+function uploadChip(
+  host: HTMLElement,
+  name: string,
+): { progress: (percent: number) => void; done: (msg: string) => void; fail: (msg: string) => void } {
+  const bar = h('i', {})
+  const label = h('span', { class: 'zt-upload-name' }, name)
+  const percent = h('span', { class: 'zt-upload-pct' }, '0%')
+  const chip = h('div', { class: 'zt-upload' }, label, h('span', { class: 'zt-upload-bar' }, bar), percent)
+  host.appendChild(chip)
+  const clear = (ms: number) => window.setTimeout(() => chip.remove(), ms)
+  return {
+    progress: (p) => {
+      const v = Math.max(0, Math.min(100, Math.round(p)))
+      bar.style.width = `${v}%`
+      percent.textContent = `${v}%`
+    },
+    done: (msg) => {
+      chip.classList.add('is-done')
+      label.textContent = `${name} · ${msg}`
+      bar.style.width = '100%'
+      percent.textContent = ''
+      clear(1400)
+    },
+    fail: (msg) => {
+      chip.classList.add('is-error')
+      label.textContent = msg
+      bar.style.width = '100%'
+      percent.textContent = ''
+      clear(6000)
+      toast(msg, 'error')
+    },
+  }
+}
+
+/**
+ * 上传并插入图片。上传是异步的，落点用触发那一刻的光标位置。
+ * 插完一张把落点往后挪一个节点，多张图不会叠在一起。
+ */
+async function uploadImagesAt(
+  editor: Editor,
+  pos: number,
+  files: File[],
+  host: HTMLElement,
+): Promise<void> {
+  let at = pos
+  for (const file of files) {
+    const chip = uploadChip(host, file.name || '粘贴的图片')
+    try {
+      const res = await uploadAsset(file, (percent) => chip.progress(percent))
+      const node = editor.schema.nodes.image.create({
+        src: res.url,
+        alt: file.name.replace(/\.[^.]+$/, '') || '图片',
       })
-      .catch(reject)
-  })
+      const target = Math.max(0, Math.min(at, editor.state.doc.content.size))
+      editor.chain().focus().insertContentAt(target, node).run()
+      at = target + node.nodeSize
+      chip.done('已插入')
+    } catch (err) {
+      chip.fail(err instanceof Error ? err.message : '上传失败')
+    }
+  }
+}
+
+/** 上传图片到服务器 data/assets/（POST api/assets/upload）。 */
+export function uploadAsset(
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<{ name: string; url: string }> {
+  return apiUpload<{ name: string; url: string }>('api/assets/upload', file, 'file', onProgress)
 }

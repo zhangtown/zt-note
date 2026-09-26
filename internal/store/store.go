@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
+	"unicode"
 
 	"ztnote/internal/siyuan"
 )
@@ -594,38 +596,100 @@ func utf8Start(b byte) bool { return b&0xC0 != 0x80 }
 // ---------------------------------------------------------------- 资源
 
 // AssetPath 返回资源文件的绝对路径（防止路径穿越）。
+// 先查工作区 assets/（上传与导入落这里，对应思源的 /assets/ 模式），
+// 再逐个笔记本 assets/（思源默认把资源放在笔记本目录里，直接拿一份思源 data/ 过来也能用）。
 func (s *Store) AssetPath(name string) (string, bool) {
 	base := filepath.Base(strings.ReplaceAll(name, "\\", "/"))
 	if base == "." || base == ".." || base == "/" || base == "" {
 		return "", false
 	}
-	// 支持 assets/xxx 与 xxx 两种写法
-	p := filepath.Join(s.AssetsDir(), base)
-	if st, err := os.Stat(p); err != nil || st.IsDir() {
-		return "", false
+	candidates := []string{filepath.Join(s.AssetsDir(), base)}
+	if entries, err := os.ReadDir(s.DataDir()); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				candidates = append(candidates, filepath.Join(s.DataDir(), e.Name(), "assets", base))
+			}
+		}
 	}
-	return p, true
+	for _, p := range candidates {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, true
+		}
+	}
+	return "", false
 }
 
-// SaveAsset 保存上传的资源，返回相对引用（assets/xxx）。
+// SaveAsset 保存上传/导入的资源，返回相对引用（assets/xxx）。
+// 文件名沿用思源的 <原名>-<yyyymmddHHmmSS>-<7 位随机>.<ext>：
+// 同名文件不会互相覆盖（否则后传的会顶掉前一张图，引用它的文档就串图了）。
 func (s *Store) SaveAsset(name string, data []byte) (string, error) {
 	if err := os.MkdirAll(s.AssetsDir(), 0o755); err != nil {
 		return "", err
 	}
 	base := filepath.Base(strings.ReplaceAll(name, "\\", "/"))
-	if base == "" || base == "." || base == ".." {
-		base = siyuan.NewID() + ".bin"
+	ext := strings.ToLower(filepath.Ext(base))
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	stem = safeAssetStem(stem)
+	if stem == "" {
+		stem = "asset"
 	}
+	base = stem + "-" + time.Now().Format("20060102150405") + "-" + siyuan.RandStr(7) + ext
 	dest := filepath.Join(s.AssetsDir(), base)
-	if _, err := os.Stat(dest); err == nil {
-		ext := filepath.Ext(base)
-		base = strings.TrimSuffix(base, ext) + "-" + siyuan.RandStr(4) + ext
-		dest = filepath.Join(s.AssetsDir(), base)
-	}
 	if err := os.WriteFile(dest, data, 0o644); err != nil {
 		return "", err
 	}
 	return "assets/" + base, nil
+}
+
+// ImportAsset 导入已有工作区里的资源：**能沿用原文件名就沿用**。
+//
+// 文档里的图片引用是相对路径 assets/xxx.png，导入时若把文件名改成
+// xxx-<时间戳>-<随机串>.png，文档就会指不到图（图片全 404）。所以只有目标
+// 名下已经有同名文件时，才退回到 SaveAsset 的改名方案，避免覆盖已有图片；
+// 改名后的新引用由调用方（importer）回写进文档。
+func (s *Store) ImportAsset(name string, data []byte) (string, error) {
+	if err := os.MkdirAll(s.AssetsDir(), 0o755); err != nil {
+		return "", err
+	}
+	base := filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	ext := strings.ToLower(filepath.Ext(base))
+	stem := safeAssetStem(strings.TrimSuffix(base, filepath.Ext(base)))
+	if stem == "" {
+		stem = "asset"
+	}
+	kept := stem + ext
+	dest := filepath.Join(s.AssetsDir(), kept)
+	if _, err := os.Stat(dest); os.IsNotExist(err) {
+		if err := os.WriteFile(dest, data, 0o644); err != nil {
+			return "", err
+		}
+		return "assets/" + kept, nil
+	}
+	return s.SaveAsset(base, data)
+}
+
+// safeAssetStem 把文件名里不能安全出现在 URL / 文件系统里的字符换掉，保留中文与常见符号。
+func safeAssetStem(stem string) string {
+	var b strings.Builder
+	for _, r := range stem {
+		switch {
+		case r == '\uFFFD' || r < 0x20 || r == 0x7f:
+			continue
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		case strings.ContainsRune("-_.()[] ", r):
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := strings.TrimSpace(b.String())
+	// Windows 不允许文件名以点结尾；纯空白也当不存在
+	out = strings.Trim(out, ".")
+	if len([]rune(out)) > 60 {
+		out = string([]rune(out)[:60])
+	}
+	return out
 }
 
 // ---------------------------------------------------------------- 统计
@@ -662,6 +726,21 @@ func (s *Store) Stat() Stats {
 		for _, e := range entries {
 			if !e.IsDir() {
 				st.Assets++
+			}
+		}
+	}
+	// 思源默认把资源放在各笔记本的 assets/ 里，一并统计
+	if boxes, err := os.ReadDir(s.DataDir()); err == nil {
+		for _, b := range boxes {
+			if !b.IsDir() {
+				continue
+			}
+			if entries, err := os.ReadDir(filepath.Join(s.DataDir(), b.Name(), "assets")); err == nil {
+				for _, e := range entries {
+					if !e.IsDir() {
+						st.Assets++
+					}
+				}
 			}
 		}
 	}

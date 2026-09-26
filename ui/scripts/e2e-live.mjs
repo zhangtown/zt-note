@@ -1655,6 +1655,150 @@ async function main() {
     check('9-导出', '导出链路执行', false, err instanceof Error ? err.message : String(err))
   }
 
+  /* --- 11. 图片：粘贴上传 + 排版保真（新建文档测，测完删掉）--- */
+  log('\n[11] 图片粘贴上传（真实 ClipboardEvent 带 png）')
+  if (editOk) {
+    const imgDoc = { box: target.box, id: '' }
+    let assetRef = ''
+    try {
+      const created = await postJson(`${API}/doc/create`, { box: imgDoc.box, title: 'E2E 图片测试' })
+      imgDoc.id = created.data?.id ?? ''
+      check('11-图片', '新建测试文档（走 API）', Boolean(imgDoc.id), `${created.status} ${created.text.slice(0, 120)}`)
+      await nav(APP_URL, '回到首页')
+      await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
+      await cdp.clickElement(treeDocRow('E2E 图片测试'), '文档树《E2E 图片测试》')
+      await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现')
+      await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」按钮')
+      await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '编辑器出现')
+      await sleep(300)
+
+      // 1×1 透明 PNG，构造真的 ClipboardEvent 粘进编辑器
+      const pasted = await cdp.evalJs(`(() => {
+        const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+        const bin = atob(b64)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        const dt = new DataTransfer()
+        dt.items.add(new File([bytes], 'e2e-paste.png', { type: 'image/png' }))
+        const pm = document.querySelector('.ProseMirror')
+        pm.focus()
+        const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
+        const notCancelled = pm.dispatchEvent(ev)
+        return { notCancelled, defaultPrevented: ev.defaultPrevented }
+      })()`)
+      check('11-图片', '粘贴事件被编辑器接管（已 preventDefault，不走浏览器默认插入）', pasted?.defaultPrevented === true, JSON.stringify(pasted))
+
+      await cdp.waitFor(`!!document.querySelector('.ProseMirror img[src^="assets/"]')`, 25000, '编辑器内出现图片')
+      const imgInfo = await cdp.evalJs(`(() => {
+        const im = document.querySelector('.ProseMirror img[src^="assets/"]')
+        if (!im) return null
+        return {
+          src: im.getAttribute('src'),
+          alt: im.getAttribute('alt'),
+          cls: im.className,
+          separator: !!document.querySelector('.ProseMirror img.ProseMirror-separator'),
+        }
+      })()`)
+      assetRef = String(imgInfo?.src || '')
+      check('11-图片', `编辑器内图片 src 指向 assets/（${assetRef}）`, /^assets\/e2e-paste-\d{14}-[a-z0-9]{7}\.png$/.test(assetRef), JSON.stringify(imgInfo))
+      check('11-图片', '图片 alt = 原文件名（去扩展名）', imgInfo?.alt === 'e2e-paste', JSON.stringify(imgInfo))
+      check('11-图片', '编辑器内图片带 zt-image 类名（编辑器样式）', String(imgInfo?.cls || '').includes('zt-image'), JSON.stringify(imgInfo))
+      // 进度提示是过渡态：插完 1.4s 后自己退场
+      await cdp.waitFor(`!document.querySelector('.zt-upload')`, 6000, '上传提示自动清除')
+      check('11-图片', '上传提示自动清除（不残留在编辑器里）', await cdp.evalJs(`!document.querySelector('.zt-upload')`), '')
+
+      const uploadReqs = cdp.network.filter((n) => n.url.includes('/api/assets/upload'))
+      check('11-图片', '走的是 POST api/assets/upload，且返回 200', uploadReqs.length >= 1 && uploadReqs.every((n) => n.status === 200), JSON.stringify(uploadReqs.map((n) => `${n.method} ${n.status}`)))
+      await cdp.screenshot('11-paste-image')
+
+      // 保存 → 磁盘校验 → 阅读视图
+      await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' })
+      await cdp.waitFor(`!!document.querySelector('.toast-ok')`, TOAST_TIMEOUT, '保存成功 toast')
+      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '回到阅读模式')
+      await sleep(400)
+
+      const sy = readSy(imgDoc.box, imgDoc.id)
+      const name = assetRef.split('/').pop()
+      const assetPath = join(WS, 'data', 'assets', name)
+      const imgNode = (sy.json.Children ?? []).flatMap((c) => c.Children ?? []).find((n) => n.Type === 'NodeImage')
+      const dest = (imgNode?.Children ?? []).find((n) => n.Type === 'NodeLinkDest')?.Data
+      check('11-图片', '.sy 里写入 NodeImage，src 指向上传资源', Boolean(dest) && dest === assetRef, JSON.stringify({ dest, assetRef }))
+      check('11-图片', '资源文件已落盘到 data/assets/', existsSync(assetPath), assetPath.replace(ROOT, ''))
+      const readHtml = await cdp.evalJs(`document.querySelector('.doc-html')?.innerHTML ?? ''`)
+      check('11-图片', '阅读视图渲染 <img src="assets/…">（经 /assets/ 路由可取到）', new RegExp(`<img[^>]+src="${assetRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(readHtml), readHtml.slice(0, 200))
+      const served = await httpJson(`${BASE}${PREFIX}/${assetRef}`, {})
+      check('11-图片', '图片 URL 能直接取到（HTTP 200）', served.status === 200, `status=${served.status}`)
+
+      ctx.image = { doc: imgDoc.id, ref: assetRef, alt: imgInfo?.alt, uploadReqs: uploadReqs.length, syHasNodeImage: Boolean(dest), assetOnDisk: existsSync(assetPath), served: served.status }
+
+      // 清理：删测试文档 + 删上传的资源
+      await postJson(`${API}/doc/delete`, { box: imgDoc.box, id: imgDoc.id })
+      const docGone = !existsSync(join(WS, 'data', imgDoc.box, `${imgDoc.id}.sy`))
+      let assetGone = true
+      try {
+        rmSync(assetPath)
+        assetGone = !existsSync(assetPath)
+      } catch {
+        assetGone = false
+      }
+      check('11-图片', '清理：测试文档与上传资源已删除', docGone && assetGone, `doc=${docGone} asset=${assetGone}`)
+    } catch (err) {
+      check('11-图片', '图片粘贴上传链路执行', false, err instanceof Error ? err.message : String(err))
+      if (imgDoc.id) {
+        try {
+          await postJson(`${API}/doc/delete`, { box: imgDoc.box, id: imgDoc.id })
+          if (assetRef) rmSync(join(WS, 'data', 'assets', assetRef.split('/').pop()), { force: true })
+        } catch {
+          /* 清理失败不影响结论 */
+        }
+      }
+    }
+  } else {
+    skip('11-图片', '图片粘贴上传链路（编辑模式前置步骤失败）')
+  }
+
+  /* --- 11b. 图片行排版：思源 parent-style 宽度还原成「一行四张」--- */
+  log('\n[11b] 图片行排版（阅读视图，《示例文稿》）')
+  try {
+    await nav(APP_URL, '回到应用首页')
+    await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
+    // 直接走 hash 路由，不依赖文档树展开状态
+    await cdp.evalJs(`location.hash = '#/doc/20250708095329-8rxeagf/20250604143405-29orui7'`)
+    await cdp.waitFor(`!!document.querySelector('.doc-html .img-rows > p.img-row')`, 20000, '阅读视图出现图片行')
+    // 图片是 loading=lazy，先滚到容器处再量
+    await cdp.evalJs(`(() => { const b = document.querySelector('.doc-html .img-rows'); if (b) b.scrollIntoView({ block: 'center' }); return true })()`)
+    await sleep(900)
+    const layout = await cdp.evalJs(`(() => {
+      const box = document.querySelector('.doc-html .img-rows')
+      const rows = Array.prototype.slice.call(box.querySelectorAll(':scope > p.img-row'))
+      const cr = box.getBoundingClientRect()
+      return {
+        container: Math.round(cr.width),
+        html: box.innerHTML.slice(0, 3000),
+        rows: rows.map((r) => {
+          const rr = r.getBoundingClientRect()
+          const im = r.querySelector('img')
+          return {
+            w: Math.round(rr.width), top: Math.round(rr.top), style: r.getAttribute('style'),
+            imgW: im ? Math.round(im.getBoundingClientRect().width) : 0,
+            loaded: im ? !!(im.complete && im.naturalWidth > 0) : false,
+          }
+        }),
+      }
+    })()`)
+    const rows = layout?.rows ?? []
+    const tops = new Set(rows.map((r) => r.top))
+    check('11b-排版', `图片行容器含 ${rows.length} 个 img-row`, rows.length >= 4, JSON.stringify({ container: layout?.container, n: rows.length }))
+    check('11b-排版', '每行正好 4 张（行数 = ceil(img-row 数 / 4)，未被块间空白挤成每行 3 张）', tops.size === Math.ceil(rows.length / 4), JSON.stringify({ tops: [...tops], 期望行数: Math.ceil(rows.length / 4), n: rows.length }))
+    check('11b-排版', '单元格宽度 = 容器宽度的 1/4（parent-style width:25% 生效）', rows.length > 0 && rows.every((r) => Math.abs(r.w - layout.container / 4) <= 2), JSON.stringify({ 容器四分之一: Math.round(layout.container / 4), 实际: rows.map((r) => r.w) }))
+    check('11b-排版', 'parent-style 的宽度写进了 style 属性', rows.every((r) => String(r.style || '').replace(/\s+/g, '').includes('width:25%')), JSON.stringify(rows.map((r) => r.style)))
+    check('11b-排版', '图片真实加载成功（非 404 占位）', rows.every((r) => r.loaded), JSON.stringify(rows.map((r) => ({ imgW: r.imgW, loaded: r.loaded }))))
+    check('11b-排版', '渲染出的 HTML 里块间无空白（防回归）', !/<\/p>\s+<p/.test(String(layout?.html || '')), /<\/p>\s+<p/.test(String(layout?.html || '')) ? '存在块间空白' : 'no')
+    await cdp.screenshot('11b-image-rows')
+  } catch (err) {
+    check('11b-排版', '图片行排版检查', false, err instanceof Error ? err.message : String(err))
+  }
+
   /* --- 10. 前端异常汇总 --- */
   log('\n[10] 前端异常汇总')
   await sleep(300)

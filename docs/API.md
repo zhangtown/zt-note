@@ -45,9 +45,18 @@
 | POST | `api/doc/delete` | `{box,id}` |
 | POST | `api/notebook/create` | `{name}` → `{id}` |
 | POST | `api/assets/upload` | multipart `file` → `{name,url}` |
-
 保存语义：`changed:false` 的块按 `id` 复用原始 .sy 节点；`changed:true` 的块按 `pm` 重新生成
 （保留块 ID）；`blocks` 中缺失的块视为删除；顺序以 `blocks` 数组为准。后端刷新 `updated`。
+
+## 图片与资源
+
+| 环节 | 契约 |
+|---|---|
+| 上传 | `POST api/assets/upload`（multipart `file`）→ `{name,url}`；落盘到工作区 `data/assets/`，重名自动加 `-<yyyyMMddHHmmss>-<rand>` 后缀 |
+| 显示 | 图片 URL 就是 `assets/<name>`（经静态路由 `/assets/`，网关模式下带 `/app/zt-note` 前缀）；前端全部用相对路径 |
+| 写成节点 | 前端插入的图片必须落成思源原生形态：`NodeImage{Data:"span",Properties:{parent-style,style}}` + `NodeLinkDest{Data:"assets/<name>"}`，`alt` = 原文件名去扩展名 |
+| 排版保真 | `parent-style: width:25%` 决定一行几张（连续同宽图片段落包进 `div.img-rows`），`style: width:10000px` 是原图宽度（靠 `max-width:100%` 收进容器） |
+| 导入 | `assets/*` 按原名导入；仅同名冲突时改名，并同步改写文档/超链接里的 `assets/<原名>` 引用 |
 
 ## 导入 / 导出
 
@@ -59,7 +68,7 @@
 | GET | `api/export/md?box=<id|all>` | 下载 zip：`<笔记本>/<标题>.md` + `assets/*` |
 
 导入识别细节：
-- **思源格式**：zip 内 `<boxID>/<docID>.sy`（可带一层 `data/` 前缀），`.siyuan/conf.json` → 笔记本名；`assets/*` → `data/assets/`。
+- **思源格式**：zip 内 `<boxID>/<docID>.sy`（可带一层 `data/` 前缀），`.siyuan/conf.json` → 笔记本名；`assets/*` → `data/assets/`（**按原名**，同名冲突才改名并改写文档内引用，否则 `.sy` 里的图片会 404）。
 - **markdown 格式**：`<笔记本名>/<标题>.md` + `assets/*`（即 示例工作区/markdown-export 的结构），逐个转 .sy。
 - 单文件 `.md`（如「全部笔记汇总.md」）→ 建一个同名笔记本，按一级标题拆成多篇文档。
 

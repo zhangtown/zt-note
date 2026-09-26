@@ -485,7 +485,6 @@ func parseInlineMarkup(s string, i int, image bool) (text, dest string, next int
 
 func imageNode(alt, src string) *Node {
 	n := &Node{Type: "NodeImage", Data: "span", hasData: true, props: NewProps()}
-	n.SetProp("id", "")
 	n.Add(
 		&Node{Type: "NodeBang", Data: "!", props: NewProps()},
 		&Node{Type: "NodeOpenBracket", Data: "[", props: NewProps()},

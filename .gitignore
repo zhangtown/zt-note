@@ -7,7 +7,8 @@
 # 前端
 ui/node_modules/
 ui/dist/
-internal/webui/dist/
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
 node_modules/
 
 # Go

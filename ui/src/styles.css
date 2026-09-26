@@ -548,6 +548,28 @@ a {
   margin: 0 0 0.85em;
 }
 
+/* 图片行：思源把「一行几张」记在图片节点的 parent-style 上（如 width: 25%），
+   我们把它落到段落自身的宽度。连续几张由后端包进 .img-rows（flex 容器）——
+   用 flex 而不是 inline-block，是为了不因块之间的空白字符把第 4 张 25% 的图挤下去。 */
+.prose .img-rows {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  margin: 8px 0;
+}
+
+.prose .img-rows > p.img-row {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  padding-right: 6px;
+  margin: 0;
+}
+
+.prose p.img-row > img {
+  width: 100%;
+  display: block;
+}
+
 .prose h1,
 .prose h2,
 .prose h3,
@@ -778,6 +800,76 @@ mark {
 
 .zt-editor-body {
   padding: 16px 20px 40px;
+}
+
+/* 编辑器里的图片：不再按原始尺寸顶满屏（思源笔记里常有 3000px 宽的长图），
+   统一限高，保持比例。阅读视图走 p.img-row 那套规则。 */
+.zt-editor-body img.zt-image {
+  max-width: 100%;
+  max-height: 42vh;
+  width: auto;
+  height: auto;
+  cursor: pointer;
+}
+
+.zt-editor-body img.zt-image.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 上传进度条（粘贴/拖入图片时出现在编辑区顶部） */
+.zt-uploads {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 0;
+}
+
+.zt-upload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.zt-upload-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.zt-upload-bar {
+  flex: 0 0 96px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.zt-upload-bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.12s linear;
+}
+
+.zt-upload.is-done .zt-upload-bar > i {
+  background: var(--ok, #3f9a5f);
+}
+
+.zt-upload.is-error {
+  border-color: #e0b4b4;
+  background: var(--danger-soft);
+  color: var(--danger, #b04a4a);
 }
 
 .zt-editor-body .tiptap,

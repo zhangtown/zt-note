@@ -11,15 +11,19 @@
 #   - 真正替换要 `install-local -d <解包目录> -v <卷>`（卸载+安装；@appdata 里的笔记数据不动）
 #   - 所以本脚本只负责产出 fpk，安装/升级走 deploy/fnos-app/install.sh
 #
-# Prereq: fnpack for Windows in .toolchain/fnpack/fnpack.exe
-#   download: https://static2.fnnas.com/fnpack/fnpack-1.2.3-windows-amd64
+# Prereq: fnpack 放进 .toolchain/fnpack/（按平台取不同文件名，CI 用 Linux 版）
+#   Windows: https://static2.fnnas.com/fnpack/fnpack-1.2.3-windows-amd64  → .toolchain/fnpack/fnpack.exe
+#   Linux:   https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64    → .toolchain/fnpack/fnpack
 #
 # Output: deploy/fnos-app/zt-note.fpk  (install with `bash deploy/fnos-app/install.sh`)
 set -e
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
 APP=deploy/fnos-app/zt-note
-FNPACK=.toolchain/fnpack/fnpack.exe
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) FNPACK=${FNPACK:-.toolchain/fnpack/fnpack.exe} ;;
+  *) FNPACK=${FNPACK:-.toolchain/fnpack/fnpack} ;;
+esac
 
 # 0) 可选：递增 manifest 里的 patch 版本
 if [ -n "$BUMP" ]; then

@@ -210,7 +210,17 @@ func inlineToPM(nodes []*Node) []any {
 			appendText(CleanText(n.TextContent), marksToPM(n))
 		case "NodeImage":
 			alt, src := imageParts(n)
-			out = append(out, map[string]any{"type": "image", "attrs": map[string]any{"src": src, "alt": alt}})
+			attrs := map[string]any{"src": src, "alt": alt}
+			// 思源把图片的排版信息放在节点 Properties 里：parent-style 决定“一行挤几张”
+			// （width: 25%），style 决定缩放尺寸（width: 10000px 表示原始尺寸）。
+			// 带进 PM 属性，这样重建图片块（比如只改了文档里别的块）时不会丢排版。
+			if v := strings.TrimSpace(n.Prop("parent-style")); v != "" {
+				attrs["parentStyle"] = v
+			}
+			if v := strings.TrimSpace(n.Prop("style")); v != "" {
+				attrs["style"] = v
+			}
+			out = append(out, map[string]any{"type": "image", "attrs": attrs})
 		case "NodeLink":
 			text, href := linkParts(n)
 			appendText(text, []any{map[string]any{"type": "link", "attrs": map[string]any{"href": href, "target": "_blank"}}})
@@ -446,7 +456,14 @@ func pmImageToSy(m map[string]any) *Node {
 	src := pmStringAttr(m, "src")
 	alt := pmStringAttr(m, "alt")
 	n := &Node{Type: "NodeImage", Data: "span", hasData: true, props: NewProps()}
-	n.SetProp("id", "")
+	// 只写有值的属性：思源自己的图片节点不会带空的 id 属性，
+	// 早期版本给每个重建的图片塞了个 "id":""，造成 .sy 里多出无意义的属性。
+	if v := pmStringAttr(m, "parentStyle"); v != "" {
+		n.SetProp("parent-style", v)
+	}
+	if v := pmStringAttr(m, "style"); v != "" {
+		n.SetProp("style", v)
+	}
 	n.Add(
 		&Node{Type: "NodeBang", Data: "!", props: NewProps()},
 		&Node{Type: "NodeOpenBracket", Data: "[", props: NewProps()},

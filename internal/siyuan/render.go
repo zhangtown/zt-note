@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -22,10 +23,37 @@ func RenderDocHTML(doc *Node) string {
 // （ui/src/views/doc.ts highlightBlock 用 [data-node-id=...] 查询）和导出的 HTML 都靠它。
 func RenderBlocksHTML(blocks []*Node) string {
 	var sb strings.Builder
-	for _, b := range blocks {
-		sb.WriteString(withNodeID(b.ID, RenderBlockHTML(b)))
+	for i := 0; i < len(blocks); {
+		// 连续的「图片行」段落（段内图片带 parent-style 宽度，思源里一行多图）
+		// 包进一个容器，让它们横排成一行：段落用 inline-block + 百分比宽度时，
+		// 块与块之间的空白字符会自己占一个空格宽，四张 25% 的图正好会被挤到下一行，
+		// 所以容器内部一个空白字符都不能留（块自身的尾随换行也要去掉）。
+		if rowWidth(blocks[i]) != "" {
+			j := i
+			var rows strings.Builder
+			for j < len(blocks) && rowWidth(blocks[j]) != "" {
+				rows.WriteString(strings.TrimRight(withNodeID(blocks[j].ID, RenderBlockHTML(blocks[j])), "\n"))
+				j++
+			}
+			if j-i > 1 {
+				sb.WriteString(`<div class="img-rows">` + rows.String() + "</div>\n")
+				i = j
+				continue
+			}
+		}
+		sb.WriteString(withNodeID(blocks[i].ID, RenderBlockHTML(blocks[i])))
+		i++
 	}
 	return sb.String()
+}
+
+// rowWidth 返回段落作为「图片行」单元格时的宽度（来自段内图片的 parent-style），
+// 非图片行返回空串。
+func rowWidth(n *Node) string {
+	if n == nil || n.Type != "NodeParagraph" {
+		return ""
+	}
+	return imageRowWidth(n)
 }
 
 // withNodeID 把 data-node-id 注入到一段块 HTML 的首个开始标签里。
@@ -56,6 +84,11 @@ func RenderBlockHTML(n *Node) string {
 		inner := RenderInlineHTML(n.Children)
 		if strings.TrimSpace(inner) == "" {
 			return ""
+		}
+		// 图片行：思源把“一行几张”记在图片节点的 parent-style 上（如 width: 25%），
+		// 渲染时应用到包裹它的段落——四张 25% 的图就会横排成一行，跟思源里一样。
+		if w := imageRowWidth(n); w != "" {
+			return `<p class="img-row" style="width:` + html.EscapeString(w) + `">` + inner + "</p>\n"
 		}
 		return "<p>" + inner + "</p>\n"
 
@@ -257,7 +290,7 @@ func renderInlineNode(n *Node) string {
 		return content
 	case "NodeImage":
 		alt, src := imageParts(n)
-		return fmt.Sprintf("<img src=\"%s\" alt=\"%s\" loading=\"lazy\">", html.EscapeString(src), html.EscapeString(alt))
+		return fmt.Sprintf("<img src=\"%s\" alt=\"%s\" loading=\"lazy\"%s>", html.EscapeString(src), html.EscapeString(alt), imageSizeAttr(n))
 	case "NodeLink":
 		text, href := linkParts(n)
 		return fmt.Sprintf("<a href=\"%s\" target=\"_blank\" rel=\"noopener\">%s</a>", html.EscapeString(href), html.EscapeString(text))
@@ -289,6 +322,61 @@ func imageParts(n *Node) (alt, src string) {
 		src = n.Data
 	}
 	return alt, src
+}
+
+// cssWidth 从思源的 style 片段里取出宽度值（"width: 25%;" → "25%"）。
+// 只接受「数字 + px|%」形式，其余一律忽略：.sy 是用户文件，不能让任意文本
+// 直接进 HTML 属性（虽然最终还会被 html.EscapeString 转义，双重保险）。
+func cssWidth(style string) string {
+	for _, part := range strings.Split(style, ";") {
+		k, v, ok := strings.Cut(part, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), "width") {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		num, unit := v, ""
+		switch {
+		case strings.HasSuffix(v, "%"):
+			unit, num = "%", strings.TrimSuffix(v, "%")
+		case strings.HasSuffix(strings.ToLower(v), "px"):
+			unit, num = "px", v[:len(v)-2]
+		default:
+			continue
+		}
+		sharp := strings.TrimSpace(num)
+		if sharp == "" {
+			continue
+		}
+		if _, err := strconv.ParseFloat(sharp, 64); err != nil {
+			continue
+		}
+		return sharp + unit
+	}
+	return ""
+}
+
+// imageRowWidth 返回段落里图片要占的宽度：思源把「一行几张」记在图片节点的
+// parent-style 上（四张 25% 的图就是一行），渲染时应用到包着它的段落上。
+func imageRowWidth(n *Node) string {
+	for _, c := range n.Children {
+		if c == nil || c.Type != "NodeImage" {
+			continue
+		}
+		if w := cssWidth(c.Prop("parent-style")); w != "" {
+			return w
+		}
+	}
+	return ""
+}
+
+// imageSizeAttr 把思源图片节点的 style 宽度转成 img 的内联样式。
+// 思源用很大的 width（如 10000px）表示原始尺寸，靠 max-width:100% 收进容器。
+func imageSizeAttr(n *Node) string {
+	w := cssWidth(n.Prop("style"))
+	if w == "" {
+		return ""
+	}
+	return ` style="width:` + w + `;max-width:100%;height:auto"`
 }
 
 func linkParts(n *Node) (text, href string) {

@@ -10,6 +10,11 @@ import type { SaveBlock, Block } from './types'
 export interface NodeTypeLike {
   isInline?: boolean
   isTextblock?: boolean
+  /**
+   * schema 声明的属性默认值。编辑器（ProseMirror/TipTap）在 getJSON() 时会把带默认值的
+   * 属性全部物化，基准里要一致，否则“没改过”也会被判成已改动。
+   */
+  defaultAttrs?: Record<string, unknown>
 }
 
 export interface SchemaLike {
@@ -76,6 +81,12 @@ function tableToParagraphs(json: JSONContent): JSONContent[] {
   return out
 }
 
+/** 取节点类型声明的属性默认值（ProseMirror/TipTap 的 NodeType.defaultAttrs）。 */
+function defaultAttrsOf(type: NodeTypeLike): Record<string, unknown> {
+  const attrs = type.defaultAttrs
+  return attrs && typeof attrs === 'object' ? attrs : {}
+}
+
 interface SanitizeResult {
   nodes: JSONContent[]
   unsupported: number
@@ -132,7 +143,11 @@ function sanitizeNode(schema: SchemaLike, json: JSONContent | null | undefined, 
   const childCtx: Ctx = typeName === 'codeBlock' ? 'code' : type.isTextblock ? 'inline' : 'block'
   const inner = sanitizeChildren(schema, json.content, childCtx)
   const node: JSONContent = { type: typeName }
-  if (json.attrs) node.attrs = { ...json.attrs }
+  // 属性要按 schema 补齐默认值：编辑器 getJSON() 会把声明的属性全部物化
+  // （缺失的补 null），基准里也必须补齐，否则「打开含图片的文档、没做任何修改」
+  // 也会被判成已改动 → 白重建图片（多出文件、丢 .sy 里的排版属性）。
+  const attrs: Record<string, unknown> = { ...defaultAttrsOf(type), ...(json.attrs ?? {}) }
+  if (Object.keys(attrs).length) node.attrs = attrs
   if (inner.nodes.length) node.content = inner.nodes
   return { nodes: [node], unsupported: inner.unsupported }
 }

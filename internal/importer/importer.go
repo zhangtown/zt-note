@@ -178,7 +178,12 @@ func importSiyuan(s *store.Store, l Loader, names, syFiles []string) (*Result, e
 		}
 	}
 
-	// 2. 逐篇导入
+	// 2. 先落资源，拿到「原文件名 → 实际引用」的映射。
+	// 必须先于文档写入：文档里的 assets/xxx.png 引用要按实际落盘名字改写
+	// （素材同名时 ImportAsset 会给新文件加后缀）。
+	assetRefs := saveAssets(s, l, names, res)
+
+	// 3. 逐篇导入
 	for _, n := range syFiles {
 		raw, err := readAll(l, n)
 		if err != nil {
@@ -228,31 +233,12 @@ func importSiyuan(s *store.Store, l Loader, names, syFiles []string) (*Result, e
 			doc.ID = docID
 			doc.SetProp("id", docID)
 		}
+		rewriteAssetRefs(doc, assetRefs)
 		if _, err := s.WriteDoc(box, doc, parent); err != nil {
 			res.Notes = append(res.Notes, "写入失败: "+n)
 			continue
 		}
 		res.Docs++
-	}
-
-	// 3. 资源文件
-	for _, n := range names {
-		if !assetDirRe.MatchString(n) {
-			continue
-		}
-		rc, err := l.Read(n)
-		if err != nil {
-			continue
-		}
-		data, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			continue
-		}
-		if _, err := s.SaveAsset(path.Base(n), data); err != nil {
-			continue
-		}
-		res.Assets++
 	}
 	return res, nil
 }
@@ -301,6 +287,9 @@ func importMarkdown(s *store.Store, l Loader, names, mdFiles []string) (*Result,
 		jobs = append(jobs, pending{notebook: notebook, title: title, body: body})
 	}
 
+	// 先落资源：文档里的 assets/引用要按实际落盘名字改写（同名冲突时会被改名）
+	assetRefs := saveAssets(s, l, names, res)
+
 	boxMap := map[string]string{}
 	for _, j := range jobs {
 		box, ok := boxMap[j.notebook]
@@ -314,14 +303,22 @@ func importMarkdown(s *store.Store, l Loader, names, mdFiles []string) (*Result,
 			box = id
 		}
 		doc := siyuan.MDToDoc(j.body, j.title, "")
+		rewriteAssetRefs(doc, assetRefs)
 		if _, err := s.WriteDoc(box, doc, ""); err != nil {
 			res.Notes = append(res.Notes, "写入失败: "+j.title)
 			continue
 		}
 		res.Docs++
 	}
+	return res, nil
+}
 
-	// 资源
+// ---------------------------------------------------------------- 资源引用
+
+// saveAssets 把所有 assets/ 下的资源落盘，返回「原文件名 → 实际引用」的映射。
+// 只有实际名字与原名不一致（同名冲突、名里带不安全字符）时才进映射。
+func saveAssets(s *store.Store, l Loader, names []string, res *Result) map[string]string {
+	refs := map[string]string{}
 	for _, n := range names {
 		if !assetDirRe.MatchString(n) {
 			continue
@@ -335,12 +332,51 @@ func importMarkdown(s *store.Store, l Loader, names, mdFiles []string) (*Result,
 		if err != nil {
 			continue
 		}
-		if _, err := s.SaveAsset(path.Base(n), data); err != nil {
+		base := path.Base(n)
+		ref, err := s.ImportAsset(base, data)
+		if err != nil {
 			continue
+		}
+		if ref != "assets/"+base {
+			refs[base] = ref
 		}
 		res.Assets++
 	}
-	return res, nil
+	return refs
+}
+
+// rewriteAssetRefs 把文档里指向「已改名资源」的引用改成实际文件名。
+// 思源里图片是相对路径 assets/xxx.png，资源一改名就得同步改，否则图片全 404。
+func rewriteAssetRefs(n *siyuan.Node, refs map[string]string) {
+	if n == nil || len(refs) == 0 {
+		return
+	}
+	if to, ok := renamedAssetRef(refs, n.Data); ok {
+		n.Data = to
+	}
+	if to, ok := renamedAssetRef(refs, n.TextHref); ok {
+		n.TextHref = to
+	}
+	for _, c := range n.Children {
+		rewriteAssetRefs(c, refs)
+	}
+}
+
+// renamedAssetRef 从 "assets/名字" 或 "前缀/assets/名字" 里取出名字查改名表。
+func renamedAssetRef(refs map[string]string, val string) (string, bool) {
+	v := strings.ReplaceAll(val, "\\", "/")
+	if i := strings.LastIndex(v, "/assets/"); i >= 0 {
+		v = v[i+1:]
+	}
+	if !strings.HasPrefix(v, "assets/") {
+		return "", false
+	}
+	base := v[len("assets/"):]
+	if base == "" || strings.Contains(base, "/") {
+		return "", false
+	}
+	to, ok := refs[base]
+	return to, ok
 }
 
 type noteSection struct {

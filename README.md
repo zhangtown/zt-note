@@ -29,7 +29,7 @@ zt-note 的做法是把保真做成默认路径：
 4. 保存时如果整篇文档没有任何变化，请求不写盘，文件字节与 mtime 都不动。
 
 已验证：12 篇真实笔记（227 个块）经过"导入 → 加载 → 保存 → 导出"后，
-`.sy` 与原始文件 **12/12 逐字节相同**（`tools/sycheck`）。后端另有 31 项接口级
+`.sy` 与原始文件 **12/12 逐字节相同**（`tools/sycheck`）。后端另有 50 项接口级
 端到端断言（`.test/e2e.py`）。
 
 ## 快速开始（开发）
@@ -63,6 +63,10 @@ bash deploy/fnos-app/install.sh       # 打包 + 上传 + 安装/升级 + 验证
 产物：`deploy/fnos-app/zt-note.fpk`（约 3.4 MB）。安装、升级（注意 `install-fpk` 对已装应用
 无效这个坑）与 NAS 部署步骤见 [`deploy/README.md`](deploy/README.md)。
 
+CI（`.github/workflows/ci.yml`）：Go vet + 单测、前端类型检查/build/逻辑测试、`build.sh all`
+产 fpk 并作为 artifact 上传。`internal/webui/dist` 不入库，仓库里只放一个 `.gitkeep`
+（`go:embed all:dist` 要求目录存在；缺 `index.html` 时 `webui.Available()` 为 false）。
+
 ## 数据与导入
 
 支持三种导入方式，全部只读源、不修改原始数据（重名自动加 `-2`、`-3` 后缀）：
@@ -78,6 +82,17 @@ bash deploy/fnos-app/install.sh       # 打包 + 上传 + 安装/升级 + 验证
 
 导出两种格式：`api/export/siyuan`（`data/<box>/<doc>.sy` + `assets/`，可直接解开覆盖回
 思源工作区）、`api/export/md`。
+
+图片按原名导入（同名冲突才改名，并同步改写文档里的 `assets/...` 引用——否则 `.sy` 里的
+图片会全部 404）。
+
+## 图片
+
+- **上传**：编辑器里直接粘贴、拖拽，或用工具条的「图片」按钮 → `api/assets/upload` → 插入图片节点
+- **格式**：写成思源原生形态——`NodeImage{parent-style,style}` 包一个 `NodeLinkDest`，
+  `alt` 是原文件名；不存私有字段，导出回思源依然是思源图片
+- **排版**：`parent-style: width:25%` 决定一行几张（四张就是一行四张），`style` 是原图宽度，
+  靠 `max-width:100%` 收进容器；阅读视图与编辑器都按这套规则还原
 
 ## 目录结构
 
@@ -100,6 +115,8 @@ docs/PROGRESS.md     进度与待办
 ## 已知边界
 
 - 表格：思源表格 → 前端原生表格（结构对等但表头/列宽等属性不保留），当前真实数据里没有表格
+- 图片：粘贴/拖拽/上传与 `parent-style` 排版已保真；思源里手动拖过尺寸的图片不还原像素级宽度
+  （`style` 原值会写回，但编辑时前端不提供拖拽改尺寸）
 - 代码块：语言、折行等以原字段为准；未编辑时整个节点原样复用
 - 未实现：块引用/块属性面板、标签与书签、图纸/数据库等衍生块类型的编辑
 - 应用内无账号体系：写操作要求网关注入 `X-Trim-Isadmin: true`（本机直连无该头时放行）
