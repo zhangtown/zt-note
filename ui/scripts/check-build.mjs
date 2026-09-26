@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 构建自检：确认 dist/index.html 存在，且引用的 js/css 都是相对路径（./static/...）。
 // 用法：npm run build（postbuild 自动执行）或 npm run verify
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -76,6 +76,12 @@ if (existsSync(dist)) {
     if (hits.length) bad(`${file.replace(dist, '.')} 含绝对资源 URL：${hits.slice(0, 3).join(', ')}`)
   }
   ok('未发现绝对资源 URL')
+
+  // go:embed all:dist 要求目录存在：仓库里必须有 dist/.gitkeep，否则新克隆 / CI
+  // 一上来就 “pattern all:dist: no matching files found”。vite build 会清空 outDir，
+  // 所以每次构建完都把占位文件补回来（不入产物清单，只是给 embed 一个存在的目录）。
+  writeFileSync(join(dist, '.gitkeep'), '')
+  ok('补回 .gitkeep 占位（go:embed 需要 dist 目录存在）')
 }
 
 if (problems.length) {
