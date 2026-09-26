@@ -276,6 +276,8 @@ func parseMDList(lines []string, start int) (*Node, int) {
 
 func parseMDTable(lines []string, start int) (*Node, int) {
 	table := NewBlock("NodeTable", NewID())
+	var head *Node
+	delimSeen := false
 	i := start
 	for i < len(lines) {
 		t := strings.TrimSpace(lines[i])
@@ -283,17 +285,31 @@ func parseMDTable(lines []string, start int) (*Node, int) {
 			break
 		}
 		if reTableSep.MatchString(t) {
+			// 分隔行决定每列对齐（同 Lute parse/table.go 的 TableAligns）
+			table.TableAligns = tableDelimAligns(strings.Trim(t, "|"))
+			delimSeen = true
 			i++
 			continue
 		}
 		cells := strings.Split(strings.Trim(t, "|"), "|")
 		row := NewBlock("NodeTableRow", NewID())
-		for _, c := range cells {
+		for ci, c := range cells {
 			cell := NewBlock("NodeTableCell", NewID())
+			if ci < len(table.TableAligns) {
+				cell.TableCellAlign = table.TableAligns[ci]
+			}
 			p := NewBlock("NodeParagraph", NewID())
 			p.Children = ParseInline(strings.TrimSpace(c))
 			cell.AppendNode(p)
 			row.AppendNode(cell)
+		}
+		// 分隔行之前的一行是表头（Markdown 语法规定），思源放在 NodeTableHead 下
+		if head == nil && !delimSeen {
+			head = NewBlock("NodeTableHead", NewID())
+			head.AppendNode(row)
+			table.AppendNode(head)
+			i++
+			continue
 		}
 		table.AppendNode(row)
 		i++
@@ -302,6 +318,28 @@ func parseMDTable(lines []string, start int) (*Node, int) {
 		return nil, i
 	}
 	return table, i
+}
+
+// tableDelimAligns 解析 Markdown 表格分隔行，返回每列对齐编码
+// （0 默认、1 左、2 中、3 右，与 Lute 一致）。
+func tableDelimAligns(s string) []int {
+	var out []int
+	for _, c := range strings.Split(s, "|") {
+		c = strings.TrimSpace(c)
+		left := strings.HasPrefix(c, ":")
+		right := strings.HasSuffix(c, ":")
+		switch {
+		case left && right:
+			out = append(out, 2)
+		case left:
+			out = append(out, 1)
+		case right:
+			out = append(out, 3)
+		default:
+			out = append(out, 0)
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------- 行内解析

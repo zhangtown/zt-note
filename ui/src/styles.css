@@ -690,6 +690,41 @@ a {
   background: var(--panel-soft);
 }
 
+/* 编辑区表格：单元格里的段落不要撑出空隙，空单元格也能点中 */
+.zt-editor-body table {
+  margin: 0.4em 0;
+}
+
+.zt-editor-body table th,
+.zt-editor-body table td {
+  position: relative;
+  min-width: 2.2em;
+  vertical-align: top;
+}
+
+.zt-editor-body table p {
+  margin: 0;
+}
+
+/* 单元格选择高亮（框选多个单元格后合并用） */
+.zt-editor-body table .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(122, 162, 247, 0.22);
+  pointer-events: none;
+}
+
+/* 窄屏：阅读视图的宽表格横向滑动，别把整页撑破（编辑区不动，免得影响单元格点击） */
+@media (max-width: 720px) {
+  .prose:not(.tiptap) table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
 .prose a {
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -768,6 +803,32 @@ mark {
   height: 18px;
   background: var(--border-strong);
   margin: 0 3px;
+}
+
+/* 表格操作条：光标进表格才显示 */
+.tb-tablebar {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.tb-tablebar.is-open {
+  display: flex;
+}
+
+.tb-tablebar .tb-btn {
+  background: #fff;
+  border-color: #c9dbff;
+  color: #14459f;
+  font-size: 12px;
+}
+
+.tb-tablebar .tb-btn:hover {
+  background: #e8f0ff;
 }
 
 .tb-lang-wrap {

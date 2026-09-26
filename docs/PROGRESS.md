@@ -12,9 +12,10 @@
 | 5 | 保真校验 | `tools/sycheck`：12/12 篇 `.sy` 逐字节一致（227 块、22 资源） |
 | 6 | 前端 | `ui/`（Vite + TipTap）：树/文档/编辑/搜索/导入导出；产物内嵌 `internal/webui/dist` |
 | 7 | 接口级端到端 | `.test/e2e.py` 50/50 全绿（含“不改动直接保存 → 文件字节不变”、搜索 blockId 契约、资源上传/命名/引用改写） |
-| 8 | UI 联调（严格模式） | `ui/scripts/e2e-live.mjs` 77/77 全绿：真实 Go 后端 + 无头 Chrome 走完「点开 → 编辑 → 保存 → 磁盘核对 → 无改动保存 → 搜索整篇/块定位 → 导出比对 → 粘贴上传图片」，报告 `ui/E2E-LIVE-REPORT.md` |
+| 8 | UI 联调（严格模式） | `ui/scripts/e2e-live.mjs` 105/105 全绿：真实 Go 后端 + 无头 Chrome 走完「点开 → 编辑 → 保存 → 磁盘核对 → 无改动保存 → 搜索整篇/块定位 → 导出比对 → 粘贴上传图片 → 表格插入/增删行列/`.sy` 往返」，报告 `ui/E2E-LIVE-REPORT.md` |
 | 9 | 打包与实机部署 | `zt-note.fpk` 3.4 MB 已装到 your-nas.local（版本 0.1.1），12 篇真实笔记已导入并可读 |
 | 10 | 图片与资源 | 编辑器粘贴/拖拽/按钮上传（`api/assets/upload`）；排版保真（`parent-style`/`style` 一行多图）；修掉“导入后图片全 404”（`internal/importer` 资源改名未改写引用） |
+| 11 | 表格编辑 | 思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格双向映射（`internal/siyuan/pm.go` 的 `tableToPM`/`pmTableToSy`、`model.go` 的 `TableRows`/`TableColumns`/`TableSpan`）；插入 3×3 + 浮动操作条；`colgroup`/对齐/合并单元格往返。证据：`internal/siyuan/table_test.go` 全绿（含“只有 `NodeTableHead` 的表格不能丢表头行”“未改动表格 sha 不变”），前端逻辑测试 34/34，浏览器 e2e 20 项表格断言全绿 |
 
 ## 待办
 
@@ -22,7 +23,7 @@
 - [x] 图片上传的 UI（粘贴/拖拽/「图片」按钮 → `api/assets/upload`，已接入）
 - [x] 推送远端 + CI（`.github/workflows/ci.yml`：go / 前端 / fpk 三个 job）
 - [ ] 块引用 / 块属性面板（`.sy` 里已保留原始字段，属于“读得懂写不回”）
-- [ ] 表格编辑（当前只读渲染；思源表格属性不保留）
+- [x] 表格编辑（思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格；插入、增删行列、表头行、`.sy` 往返）
 - [ ] 标签、书签、日记本等思源衍生块
 - [ ] 多用户与权限（现在只区分管理员/非管理员，由网关决定）
 - [ ] 定时/手动备份工作区（或写进 fpk 的 lifecycle 脚本）
@@ -45,6 +46,11 @@
 - **一行多图靠两件事同时成立**：`.sy` 里图片节点带 `parent-style: width: 25%;`，且渲染出的
   `div.img-rows` 里**不能有块间空白**（模板里的换行/缩进会把第 4 张挤到下一行，前端还要
   重复一遍这个包装逻辑——编辑器没有 `parent-style` 概念）
+- **思源表格的权威结构去查 Lute 源码**：`node/table.go`/`table_row.go`/`table_cell.go` +
+  `parse/table.go` + `render/html.go`（v1.7.8）——表头行在 `NodeTableHead` 里、`colgroup` 缺列要按
+  `|` 补空列、单元格直接存行内节点（没有 `NodeParagraph`）。别照着自己的 `.sy` 猜格式
+- **`cdp.clickElement(expr)` 收的是 JS 表达式不是 CSS 选择器**（自己写 UI 测试脚本时的坑）：
+  传 `'.foo'` 会当成表达式报 `SyntaxError`，要传 `document.querySelector('.foo')`
 
 ## 决策记录
 
@@ -58,3 +64,6 @@
 - **图片排版属性双写**：思源把“一行几张”记在图片节点的 `parent-style: width:25%`、把原图宽度
   记在 `style: width:10000px`（靠 `max-width:100%` 收进容器）。两边都保真才能还原一行多图；
   编辑时这组默认值存在 docjson 的节点默认属性里（`ui/src/docjson.ts` 的 `defaultAttrs`）
+- **表格用 TipTap 官方四个扩展而不是自造表格节点**：这样 schema 里就有真的 `table` 节点，
+  新的 sanitizer 不会再把它降级成段落；代价是列宽编辑只能做到“按位置保留 `colgroup`”
+- **新表格不写 `colgroup`/`cols`**：让思源自己决定默认列宽，写死了反而会在窄屏/不同字体下难堪

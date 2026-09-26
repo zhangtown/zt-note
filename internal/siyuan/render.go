@@ -213,21 +213,105 @@ func renderListItem(item *Node, ordered bool) string {
 func renderTable(table *Node) string {
 	var sb strings.Builder
 	sb.WriteString("<table>\n")
-	for _, row := range table.Children {
-		if row.Type != "NodeTableRow" {
-			continue
-		}
-		sb.WriteString("<tr>")
-		for _, cell := range row.Children {
-			if cell.Type != "NodeTableCell" {
-				continue
+	for _, child := range table.Children {
+		switch child.Type {
+		case "NodeTableHead":
+			// 思源把表头行放在 NodeTableHead 里（见 Lute parse/table.go）
+			sb.WriteString("<thead>\n")
+			for _, row := range child.Children {
+				sb.WriteString(renderTableRow(row, "th"))
 			}
-			sb.WriteString("<td>" + RenderBlocksHTML(cell.Children) + "</td>")
+			sb.WriteString("</thead>\n")
+		case "NodeTableRow":
+			sb.WriteString(renderTableRow(child, "td"))
 		}
-		sb.WriteString("</tr>\n")
 	}
 	sb.WriteString("</table>\n")
 	return sb.String()
+}
+
+func renderTableRow(row *Node, cellTag string) string {
+	if row.Type != "NodeTableRow" {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("<tr>")
+	for _, cell := range row.Children {
+		if cell.Type != "NodeTableCell" {
+			continue
+		}
+		attrs := ""
+		if colspan, rowspan := cell.TableSpan(); colspan > 1 || rowspan > 1 {
+			if colspan > 1 {
+				attrs += fmt.Sprintf(" colspan=\"%d\"", colspan)
+			}
+			if rowspan > 1 {
+				attrs += fmt.Sprintf(" rowspan=\"%d\"", rowspan)
+			}
+		}
+		if style := tableCellAlignStyle(cell.TableCellAlign); style != "" {
+			attrs += " style=\"" + style + "\""
+		}
+		sb.WriteString("<" + cellTag + attrs + ">" + cellHTML(cell) + "</" + cellTag + ">")
+	}
+	sb.WriteString("</tr>\n")
+	return sb.String()
+}
+
+// cellHTML 渲染单元格内容：思源原生的单元格直接存行内节点（渲染成 `<td>文字</td>`，
+// 不要再套 `<p>`——单元格里的段落间距很丑），早期 Markdown 导入的会包一层段落；
+// 两种都要能渲染。
+func cellHTML(cell *Node) string {
+	children := cell.Children
+	if allInline(children) {
+		return RenderInlineHTML(children)
+	}
+	if len(children) == 1 && children[0].Type == "NodeParagraph" {
+		inner := RenderInlineHTML(children[0].Children)
+		if strings.TrimSpace(inner) == "" {
+			return ""
+		}
+		return inner
+	}
+	var sb strings.Builder
+	for i := 0; i < len(children); {
+		if children[i].IsInline() {
+			j := i
+			var run []*Node
+			for j < len(children) && children[j].IsInline() {
+				run = append(run, children[j])
+				j++
+			}
+			sb.WriteString(RenderInlineHTML(run))
+			i = j
+			continue
+		}
+		sb.WriteString(RenderBlockHTML(children[i]))
+		i++
+	}
+	return sb.String()
+}
+
+func allInline(nodes []*Node) bool {
+	for _, n := range nodes {
+		if !n.IsInline() {
+			return false
+		}
+	}
+	return true
+}
+
+// tableCellAlignStyle 把思源的对齐编码（0 默认、1 左、2 中、3 右）变成行内样式，与 Lute 渲染一致。
+func tableCellAlignStyle(align int) string {
+	switch align {
+	case 1:
+		return "text-align: left"
+	case 2:
+		return "text-align: center"
+	case 3:
+		return "text-align: right"
+	}
+	return ""
 }
 
 var zeroWidthRe = regexp.MustCompile("[\u200b\u200c\u200d]")
@@ -481,11 +565,9 @@ func renderBlockMD(sb *strings.Builder, n *Node, indent int) {
 		sb.WriteString(pad + "---\n\n")
 
 	case "NodeTable":
+		// NodeTableHead 里的行先渲染（思源把表头行放在那儿）
 		rows := [][]string{}
-		for _, row := range n.Children {
-			if row.Type != "NodeTableRow" {
-				continue
-			}
+		for _, row := range TableRows(n) {
 			var cells []string
 			for _, cell := range row.Children {
 				if cell.Type != "NodeTableCell" {
@@ -512,7 +594,16 @@ func renderBlockMD(sb *strings.Builder, n *Node, indent int) {
 				if i == 0 {
 					sep := make([]string, width)
 					for j := range sep {
-						sep[j] = "---"
+						switch tableAlignAt(n, j) {
+						case 1:
+							sep[j] = ":---"
+						case 2:
+							sep[j] = ":---:"
+						case 3:
+							sep[j] = "---:"
+						default:
+							sep[j] = "---"
+						}
 					}
 					sb.WriteString(pad + "| " + strings.Join(sep, " | ") + " |\n")
 				}
@@ -527,6 +618,19 @@ func renderBlockMD(sb *strings.Builder, n *Node, indent int) {
 		}
 		renderBlocksMD(sb, n.Children, indent)
 	}
+}
+
+// tableAlignAt 取第 i 列的对齐编码：优先用表格的 TableAligns，其次用该列单元格的 TableCellAlign。
+func tableAlignAt(table *Node, i int) int {
+	if i < len(table.TableAligns) {
+		return table.TableAligns[i]
+	}
+	for _, row := range TableRows(table) {
+		if i < len(row.Children) {
+			return row.Children[i].TableCellAlign
+		}
+	}
+	return 0
 }
 
 // RenderInlineMD 渲染行内节点为 Markdown。

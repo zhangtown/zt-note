@@ -8,6 +8,7 @@ import { getSchema } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import { ImageWithLayout } from '../src/image-ext'
+import { tableExtensions } from '../src/table-ext'
 import { isDirty, planSave, sanitizeBlocks, stableStringify } from '../src/docjson'
 import type { Block } from '../src/types'
 
@@ -31,6 +32,7 @@ const schema = getSchema([
   }),
   Link,
   ImageWithLayout.configure({ inline: true, allowBase64: false }),
+  ...tableExtensions(),
 ])
 
 const blocks: Block[] = [
@@ -51,14 +53,14 @@ const blocks: Block[] = [
     },
   },
   {
-    // 编辑器不支持的表格：应降级为段落，但未改动时仍以原块 ID 交回后端（changed:false）
+    // 表格（思源 NodeTable）：装了 TipTap 表格扩展后是真表格，不再降级
     id: 'b4',
     type: 'table',
     pm: {
       type: 'table',
       content: [
         { type: 'tableRow', content: [{ type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'A' }] }] }, { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'B' }] }] }] },
-        { type: 'tableRow', content: [{ type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'C' }] }] }, { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'D' }] }] }] },
+        { type: 'tableRow', content: [{ type: 'tableCell', attrs: { colspan: 1, rowspan: 2 }, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'C' }] }] }, { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'D' }] }] }] },
       ],
     },
   },
@@ -75,14 +77,28 @@ const blocks: Block[] = [
 
 console.log('1) sanitizeBlocks —— 未知节点降级、原块顺序与 ID 保留')
 const s = sanitizeBlocks(schema, blocks)
-ok(s.content.length === 6, '6 个顶层节点（表格 2 行 → 2 个段落）', `实际 ${s.content.length}`)
-ok(s.unsupportedBlocks === 1, '统计到 1 个不受支持的块（表格）', `实际 ${s.unsupportedBlocks}`)
+ok(s.content.length === 5, '5 个顶层节点（表格不再被拆成段落）', `实际 ${s.content.length}`)
+ok(s.unsupportedBlocks === 0, '没有不受支持的块（表格已支持）', `实际 ${s.unsupportedBlocks}`)
 ok(s.baseline[0].id === 'b1' && s.baseline[1].id === 'b2' && s.baseline[2].id === 'b3', '前 3 块 ID 保持 b1/b2/b3')
-ok(s.baseline[3].id === 'b4' && s.baseline[4].id === '', '表格首段继承 b4，其余为新块（id 空）')
-ok(s.content[3].type === 'paragraph' && s.content[3].content?.[0]?.text === 'A | B', '表格降级为「A | B」段落', JSON.stringify(s.content[3]))
+ok(s.baseline[3].id === 'b4' && s.content[3].type === 'table', '表格整块保留，ID 仍是 b4')
+const table = s.content[3]
+ok(table.content?.length === 2, '表格保留 2 行', JSON.stringify(table.content?.length))
+ok(
+  table.content?.[1]?.content?.[0]?.content?.[0]?.content?.[0]?.text === 'C',
+  '第 2 行第 1 格文本 C 保留',
+  JSON.stringify(table.content?.[1]?.content?.[0]),
+)
+ok(
+  (table.content?.[1]?.content?.[0]?.attrs as { rowspan?: number } | undefined)?.rowspan === 2,
+  '合并单元格的 rowspan 保留',
+)
+ok(
+  (table.content?.[0]?.content?.[1]?.attrs as { colspan?: number } | undefined)?.colspan === 1,
+  '缺失的 colspan 补成默认值 1（与编辑器 getJSON 对齐，不因少个属性就误判改过）',
+)
 const codeNode = s.content[2]
 ok(codeNode.type === 'codeBlock' && codeNode.attrs?.language === 'go', '代码块语言 go 保留', JSON.stringify(codeNode.attrs))
-const marked = s.content[5]
+const marked = s.content[4]
 ok(!JSON.stringify(marked).includes('weirdMark'), '未知标记被剔除')
 ok(typeof schema.nodes.paragraph !== 'undefined', 'schema 已就绪（含 paragraph）')
 
@@ -95,8 +111,8 @@ console.log('\n3) planSave —— 未改动：全部 changed:false 且带原 ID'
 const untouched = planSave(s.content, s.baseline)
 ok(untouched[0].id === 'b1' && untouched[0].changed === false, 'b1 changed:false + 原 ID')
 ok(untouched[2].id === 'b3' && untouched[2].changed === false, 'b3 changed:false + 原 ID')
-ok(untouched[3].id === 'b4' && untouched[3].changed === false, '表格首段 changed:false + b4（后端复用原 .sy 节点）')
-ok(untouched[4].id === null && untouched[4].changed === true, '表格拆分出的第 2 段按新块下发（id:null）')
+ok(untouched[3].id === 'b4' && untouched[3].changed === false, '未改动的表格 changed:false + b4（后端复用原 .sy 表格节点）')
+ok(untouched[4].id === 'b5' && untouched[4].changed === false, 'b5 changed:false + 原 ID')
 
 console.log('\n4) planSave —— 改动：保留原 ID 且 changed:true')
 const edited = s.content.map((node, i) =>
@@ -113,9 +129,39 @@ ok(inserted[0].id === null && inserted[0].changed === true, '新增节点 id:nul
 ok(inserted[1].id === 'b1' && inserted[1].changed === false, '插入后原块仍对齐到 b1（changed:false）')
 const removed = planSave(s.content.filter((_, i) => i !== 1), s.baseline)
 ok(!removed.some((b) => b.id === 'b2'), '删除的块（b2）不出现在下发列表')
-ok(removed.length === 5, '其余 5 块照常下发', `实际 ${removed.length}`)
+ok(removed.length === 4, '其余 4 块照常下发', `实际 ${removed.length}`)
 
-console.log('\n6) 图片：排版属性保真 + 未改动不重建')
+console.log('\n6) 表格：改过就按 changed:true 整块下发（写回 .sy 用）')
+const tableEdited = s.content.map((node, i) =>
+  i === 3
+    ? {
+        type: 'table',
+        content: [
+          {
+            type: 'tableRow',
+            content: [
+              { type: 'tableHeader', content: [{ type: 'paragraph', content: [{ type: 'text', text: '名称' }] }], attrs: { colspan: 1, rowspan: 1, colwidth: null } },
+              { type: 'tableHeader', content: [{ type: 'paragraph', content: [{ type: 'text', text: '数量' }] }], attrs: { colspan: 1, rowspan: 1, colwidth: null } },
+            ],
+          },
+          {
+            type: 'tableRow',
+            content: [
+              { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: '苹果' }] }], attrs: { colspan: 1, rowspan: 1, colwidth: null } },
+              { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: '3' }] }], attrs: { colspan: 1, rowspan: 1, colwidth: null } },
+            ],
+          },
+        ],
+      }
+    : node,
+)
+const tablePlan = planSave(tableEdited, s.baseline)
+ok(tablePlan[3].id === 'b4' && tablePlan[3].changed === true, '改过的表格 changed:true 且保留 ID b4')
+ok(tablePlan[3].type === 'table', '下发的 type 是 table（后端按此写回 NodeTable）')
+ok(JSON.stringify(tablePlan[3].pm).includes('"tableHeader"'), '表头单元格（tableHeader）在下发的节点里', JSON.stringify(tablePlan[3].pm).slice(0, 120))
+ok(tablePlan[3].level === null || tablePlan[3].level === undefined, '表格没有标题级别')
+
+console.log('\n7) 图片：排版属性保真 + 未改动不重建')
 // 思源 .sy 里图片的 parent-style（一行几张）/ style（缩放尺寸）要一路带到保存。
 // 编辑器 schema 会把缺失的属性补成默认值 null，基准必须同样补齐，
 // 否则「打开含图片的文档、什么都没改」会被判成已改动，白白重建节点、丢掉原有属性。

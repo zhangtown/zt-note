@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -178,6 +179,11 @@ type Node struct {
 
 	Children []*Node
 
+	// 表格：思源把每列对齐记在表节点上、单元格对齐记在单元格上（Lute ast.Node 的
+	// TableAligns / TableCellAlign，0 默认、1 左、2 中、3 右，0 时不落盘）。
+	TableAligns    []int
+	TableCellAlign int
+
 	// 字段是否存在（区分零值与缺失）
 	hasData, hasMark, hasCodeInfo          bool
 	hasHeadingLevel, hasFenced, hasContent bool
@@ -250,6 +256,10 @@ func parseNode(d *json.Decoder) (*Node, error) {
 		case "CodeBlockInfo":
 			_ = json.Unmarshal(raw, &n.CodeInfo)
 			n.hasCodeInfo = true
+		case "TableAligns":
+			n.TableAligns = parseIntSlice(raw)
+		case "TableCellAlign":
+			_ = json.Unmarshal(raw, &n.TableCellAlign)
 		case "Properties":
 			p, err := parsePropsRaw(raw)
 			if err != nil {
@@ -384,6 +394,12 @@ func (n *Node) fieldMap() map[string]json.RawMessage {
 	if n.hasCodeInfo {
 		put("CodeBlockInfo", n.CodeInfo)
 	}
+	if len(n.TableAligns) > 0 {
+		put("TableAligns", n.TableAligns)
+	}
+	if n.TableCellAlign != 0 {
+		put("TableCellAlign", n.TableCellAlign)
+	}
 	if n.props != nil {
 		m["Properties"] = json.RawMessage(mustJSON(n.props))
 	}
@@ -416,11 +432,134 @@ func canonicalOrder(n *Node) []string {
 		return []string{"Type", "Data", "TextMarkType", "TextMarkTextContent", "TextMarkAHref", "CodeBlockInfo", "Properties", "Children"}
 	default:
 		// 块级与文档：ID, Spec, Type, 类型特有字段, Properties, Children
-		return []string{"ID", "Spec", "Type", "HeadingLevel", "IsFencedCodeBlock", "Properties", "Children"}
+		return []string{"ID", "Spec", "Type", "HeadingLevel", "IsFencedCodeBlock", "TableAligns", "TableCellAlign", "Properties", "Children"}
 	}
 }
 
 // ---------------------------------------------------------------- 构造与访问
+
+// Extra 返回未建模的原始键（较新的思源/Lute 版本会新增字段，例如单元格富文本
+// TableCellRich）。解析后再序列化时这些键原样保留。
+func (n *Node) Extra(k string) (json.RawMessage, bool) {
+	for _, e := range n.extra {
+		if e.K == k {
+			return e.V, true
+		}
+	}
+	return nil, false
+}
+
+// TableCellChildren 返回单元格的行内内容：思源单元格直接存行内节点，
+// 但早期由 Markdown 导入生成的单元格会多包一层 NodeParagraph。
+func (n *Node) TableCellChildren() []*Node {
+	var out []*Node
+	for _, c := range n.Children {
+		if c.Type == "NodeParagraph" {
+			out = append(out, c.Children...)
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// NewTabular 创建表格里的行/表头容器节点：思源里这些节点没有 ID，也没有 Properties。
+func NewTabular(nodeType string, children []*Node) *Node {
+	return &Node{Type: nodeType, Children: children}
+}
+
+// NewTableCell 创建单元格（合并信息存在 IAL 属性 colspan/rowspan 里）。
+func NewTableCell(colspan, rowspan int, children []*Node) *Node {
+	n := &Node{Type: "NodeTableCell", Children: children}
+	if colspan > 1 {
+		n.props = NewProps()
+		n.SetProp("colspan", strconv.Itoa(colspan))
+	}
+	if rowspan > 1 {
+		if n.props == nil {
+			n.props = NewProps()
+		}
+		n.SetProp("rowspan", strconv.Itoa(rowspan))
+	}
+	return n
+}
+
+// TableSpan 返回单元格的 colspan/rowspan（缺省为 1）。
+func (n *Node) TableSpan() (int, int) {
+	return n.spanProp("colspan"), n.spanProp("rowspan")
+}
+
+// spanProp 读取合并数属性：空值、非法值、小于 2 的都当 1。
+func (n *Node) spanProp(key string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(n.Prop(key)))
+	if err != nil {
+		return 1
+	}
+	if value < 2 {
+		return 1
+	}
+	return value
+}
+
+// TableRowCount 返回表格的列数（各行单元格数的最大值，含表头行）。
+func TableColumns(t *Node) int {
+	cols := 0
+	for _, row := range TableRows(t) {
+		if len(row.Children) > cols {
+			cols = len(row.Children)
+		}
+	}
+	return cols
+}
+
+// TableRows 按文档顺序返回表格的所有行（表头行在前）。
+func TableRows(t *Node) []*Node {
+	var rows []*Node
+	for _, child := range t.Children {
+		switch child.Type {
+		case "NodeTableHead":
+			for _, row := range child.Children {
+				if row.Type == "NodeTableRow" {
+					rows = append(rows, row)
+				}
+			}
+		case "NodeTableRow":
+			rows = append(rows, child)
+		}
+	}
+	return rows
+}
+
+// IsHeaderRow 判断行是否属于表头。
+func IsHeaderRow(t, row *Node) bool {
+	for _, child := range t.Children {
+		if child.Type != "NodeTableHead" {
+			continue
+		}
+		for _, r := range child.Children {
+			if r == row {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseIntSlice(raw json.RawMessage) []int {
+	var nums []json.Number
+	if err := json.Unmarshal(raw, &nums); err != nil {
+		return nil
+	}
+	out := make([]int, 0, len(nums))
+	for _, num := range nums {
+		v, err := num.Int64()
+		if err != nil {
+			return nil
+		}
+		out = append(out, int(v))
+	}
+	return out
+}
 
 func NewText(s string) *Node {
 	return &Node{Type: "NodeText", Data: s, hasData: true, props: NewProps()}

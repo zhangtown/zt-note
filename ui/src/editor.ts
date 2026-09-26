@@ -2,9 +2,10 @@
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
-import Image from '@tiptap/extension-image'
 import Placeholder from '@tiptap/extension-placeholder'
 import type { JSONContent } from '@tiptap/core'
+import { ImageWithLayout } from './image-ext'
+import { tableExtensions } from './table-ext'
 import type { Block, SaveBlock } from './types'
 import { apiUpload } from './api'
 import { isDirty, planSave, sanitizeBlocks, stableStringify } from './docjson'
@@ -17,29 +18,10 @@ const LANGUAGE_SUGGESTIONS = [
 ]
 
 /**
- * 图片节点：思源把图片的排版信息放在节点 Properties 里，
+ * 图片节点（见 image-ext.ts）：思源把图片的排版信息放在节点 Properties 里，
  * parent-style 决定“一行挤几张”（width: 25%），style 决定缩放尺寸。
- * 声明成额外属性后，改图片所在的块也不会把它们丢掉（保存时后端写回 .sy）。
- * 用 data-* 落地，避开与 HTML 原生 style 属性重名。
+ * 放在单独模块里，让逻辑自测跑的是同一份 schema。
  */
-const ImageWithLayout = Image.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      parentStyle: {
-        default: null,
-        parseHTML: (el) => el.getAttribute('data-parent-style'),
-        renderHTML: (attrs) =>
-          attrs.parentStyle ? { 'data-parent-style': attrs.parentStyle } : {},
-      },
-      style: {
-        default: null,
-        parseHTML: (el) => el.getAttribute('data-style'),
-        renderHTML: (attrs) => (attrs.style ? { 'data-style': attrs.style } : {}),
-      },
-    }
-  },
-})
 
 export interface EditorHandle {
   /** 编辑器整体（含工具条） */
@@ -163,6 +145,13 @@ const TOOLS: Array<ToolItem | 'sep'> = [
       void insertImage(e)
     },
   },
+  {
+    id: 'table',
+    label: '表格',
+    title: '插入 3×3 表格（首行为表头）',
+    run: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+    active: (e) => e.isActive('table'),
+  },
   'sep',
   {
     id: 'undo',
@@ -175,6 +164,58 @@ const TOOLS: Array<ToolItem | 'sep'> = [
     label: '↷',
     title: '重做 (Ctrl+Shift+Z)',
     run: (e) => e.chain().focus().redo().run(),
+  },
+]
+
+// 光标落在表格里才出现的第二排按钮（参考思源的浮层表格工具栏）
+const TABLE_ACTIONS: Array<{ id: string; label: string; title: string; run: (e: Editor) => boolean }> = [
+  {
+    id: 'rowAfter',
+    label: '下方插行',
+    title: '在当前行下方插入一行',
+    run: (e) => e.chain().focus().addRowAfter().run(),
+  },
+  {
+    id: 'deleteRow',
+    label: '删行',
+    title: '删除当前行',
+    run: (e) => e.chain().focus().deleteRow().run(),
+  },
+  {
+    id: 'colAfter',
+    label: '右侧插列',
+    title: '在当前列右侧插入一列',
+    run: (e) => e.chain().focus().addColumnAfter().run(),
+  },
+  {
+    id: 'deleteCol',
+    label: '删列',
+    title: '删除当前列',
+    run: (e) => e.chain().focus().deleteColumn().run(),
+  },
+  {
+    id: 'headerRow',
+    label: '表头行',
+    title: '首行是否为表头（切换）',
+    run: (e) => e.chain().focus().toggleHeaderRow().run(),
+  },
+  {
+    id: 'merge',
+    label: '合并',
+    title: '合并选中的单元格',
+    run: (e) => e.chain().focus().mergeCells().run(),
+  },
+  {
+    id: 'split',
+    label: '拆分',
+    title: '拆分当前单元格',
+    run: (e) => e.chain().focus().splitCell().run(),
+  },
+  {
+    id: 'deleteTable',
+    label: '删表格',
+    title: '删除整个表格',
+    run: (e) => e.chain().focus().deleteTable().run(),
   },
 ]
 
@@ -315,10 +356,13 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
   )
 
   const uploads = h('div', { class: 'zt-uploads' })
+  // 光标进表格时才出现的一排操作（默认隐藏，避免常驻工具条太长）
+  const tableBar = h('div', { class: 'tb-tablebar' })
   const element = h(
     'div',
     { class: 'zt-editor' },
     toolbar,
+    tableBar,
     uploads,
     h('div', { class: 'zt-editor-scroll' }, editorHost),
     foot,
@@ -344,6 +388,7 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
       }),
       ImageWithLayout.configure({ inline: true, allowBase64: false, HTMLAttributes: { class: 'zt-image' } }),
       Placeholder.configure({ placeholder: '开始输入…' }),
+      ...tableExtensions(),
     ],
     content: { type: 'doc', content: [] },
     editorProps: {
@@ -409,6 +454,24 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
   )
   toolbar.appendChild(langList)
 
+  for (const item of TABLE_ACTIONS) {
+    tableBar.appendChild(
+      h(
+        'button',
+        {
+          class: `tb-btn tb-${item.id}`,
+          type: 'button',
+          title: item.title,
+          onclick: () => {
+            item.run(editor)
+            refresh()
+          },
+        },
+        item.label,
+      ),
+    )
+  }
+
   let langTimer = 0
   const commitLang = () => {
     const value = langInput.value.trim()
@@ -431,6 +494,8 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
       const on = item.active ? item.active(editor) : false
       btn.classList.toggle('is-active', on)
     }
+    const inTable = editor.isActive('table')
+    tableBar.classList.toggle('is-open', inTable)
     const inCode = editor.isActive('codeBlock')
     langInput.disabled = !inCode
     if (document.activeElement !== langInput) {

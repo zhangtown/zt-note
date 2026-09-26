@@ -1799,6 +1799,147 @@ async function main() {
     check('11b-排版', '图片行排版检查', false, err instanceof Error ? err.message : String(err))
   }
 
+  /* --- 12. 表格：插入/编辑/加删行列 → .sy NodeTable 往返 --- */
+  log('\n[12] 表格（插入 + 编辑 + 加删行列 + .sy 往返）')
+  if (editOk) {
+    const tblDoc = { box: target.box, id: '' }
+    const TBL_TEXT = `E2E表格${Date.now() % 100000}`
+    try {
+      const created = await postJson(`${API}/doc/create`, { box: tblDoc.box, title: 'E2E 表格测试' })
+      tblDoc.id = created.data?.id ?? ''
+      check('12-表格', '新建测试文档（走 API）', Boolean(tblDoc.id), `${created.status} ${created.text.slice(0, 120)}`)
+      await nav(APP_URL, '回到首页')
+      await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
+      await cdp.clickElement(treeDocRow('E2E 表格测试'), '文档树《E2E 表格测试》')
+      await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现')
+      await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」按钮')
+      await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '编辑器出现')
+      await sleep(300)
+
+      const tableShape = () =>
+        cdp.evalJs(`(() => {
+          const t = document.querySelector('.ProseMirror table')
+          if (!t) return null
+          const first = t.rows[0]
+          return {
+            rows: t.rows.length,
+            cols: first ? first.cells.length : 0,
+            th: t.querySelectorAll('th').length,
+            barOpen: !!document.querySelector('.tb-tablebar.is-open'),
+            text: (t.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40),
+          }
+        })()`)
+
+      await cdp.clickElement(byText('.zt-toolbar .tb-btn', '表格'), '工具条「表格」按钮')
+      await cdp.waitFor(`document.querySelectorAll('.ProseMirror table').length === 1`, 8000, '编辑器内出现表格')
+      const s1 = await tableShape()
+      check('12-表格', '插入 3×3 表格，且首行是表头（th×3）', s1?.rows === 3 && s1?.cols === 3 && s1?.th === 3, JSON.stringify(s1))
+      check('12-表格', '光标在表格内时表格操作条自动展开（.tb-tablebar.is-open）', s1?.barOpen === true, JSON.stringify(s1))
+      await cdp.screenshot('12-table-insert')
+
+      // 在第一个表头单元格里写字
+      await cdp.evalJs(`(() => {
+        const p = document.querySelector('.ProseMirror table th p, .ProseMirror table td p')
+        if (!p) return false
+        const r = document.createRange(); r.selectNodeContents(p)
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+        return true
+      })()`)
+      await cdp.insertText(TBL_TEXT)
+      await sleep(200)
+      const s2 = await tableShape()
+      check('12-表格', `表头单元格写入 ${TBL_TEXT}`, String(s2?.text || '').includes(TBL_TEXT), JSON.stringify(s2))
+
+      // 列/行增删（都作用在光标所在处）
+      await cdp.clickElement(`document.querySelector('.tb-tablebar .tb-colAfter')`, '表格操作条「右侧插列」')
+      await sleep(200)
+      const s3 = await tableShape()
+      check('12-表格', '右侧插列：4 列（表头也跟着变 4 个 th）', s3?.cols === 4 && s3?.th === 4, JSON.stringify(s3))
+
+      await cdp.clickElement(`document.querySelector('.tb-tablebar .tb-rowAfter')`, '表格操作条「下方插行」')
+      await sleep(200)
+      const s4 = await tableShape()
+      check('12-表格', '下方插行：4 行', s4?.rows === 4, JSON.stringify(s4))
+
+      await cdp.clickElement(`document.querySelectorAll('.ProseMirror table tr')[3].cells[0]`, '刚插入的第 4 行（点进去再操作，跟真人一样）')
+      await sleep(150)
+      await cdp.clickElement(`document.querySelector('.tb-tablebar .tb-deleteRow')`, '表格操作条「删行」')
+      await sleep(200)
+      const s5 = await tableShape()
+      check('12-表格', '删行：回到 3 行，表头与文字保留', s5?.rows === 3 && s5?.th === 4 && String(s5?.text || '').includes(TBL_TEXT), JSON.stringify(s5))
+
+      // 插行/插列不会把光标带进新行，所以先点回表头行再切表头
+      await cdp.clickElement(`document.querySelectorAll('.ProseMirror table tr')[0].cells[0]`, '第 1 行第 1 格（表头行）')
+      await sleep(150)
+      await cdp.clickElement(`document.querySelector('.tb-tablebar .tb-headerRow')`, '表格操作条「表头行」切掉')
+      await sleep(200)
+      const s6 = await tableShape()
+      check('12-表格', '关掉表头行：th 变 0（td 接管）', s6?.th === 0, JSON.stringify(s6))
+
+      await cdp.clickElement(`document.querySelector('.tb-tablebar .tb-headerRow')`, '表格操作条「表头行」切回')
+      await sleep(200)
+      const s7 = await tableShape()
+      check('12-表格', '再开表头行：th 回到 4', s7?.th === 4, JSON.stringify(s7))
+      await cdp.screenshot('12-table-edited')
+
+      // 保存 → 阅读视图 → 磁盘 .sy
+      await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' })
+      await cdp.waitFor(`!!document.querySelector('.toast-ok')`, TOAST_TIMEOUT, '保存成功 toast')
+      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '回到阅读模式')
+      await sleep(400)
+
+      const cntType = (node, type) => {
+        let n = node?.Type === type ? 1 : 0
+        for (const c of node?.Children ?? []) n += cntType(c, type)
+        return n
+      }
+      const syT = readSy(tblDoc.box, tblDoc.id)
+      const tblNode = (syT.json.Children ?? [])[0]
+      check('12-磁盘', '.sy 顶层块是 NodeTable（不是降级段落）', tblNode?.Type === 'NodeTable', JSON.stringify((syT.json.Children ?? []).map((n) => n.Type)))
+      const head = (tblNode?.Children ?? []).find((n) => n.Type === 'NodeTableHead')
+      check('12-磁盘', '表头行写在 NodeTableHead 下', Boolean(head) && cntType(head, 'NodeTableRow') === 1, JSON.stringify((tblNode?.Children ?? []).map((n) => n.Type)))
+      check('12-磁盘', '行数 = 表头 1 + 表体 2', cntType(tblNode, 'NodeTableRow') === 3, `NodeTableRow=${cntType(tblNode, 'NodeTableRow')}`)
+      check('12-磁盘', '单元格数 = 3 行 × 4 列', cntType(tblNode, 'NodeTableCell') === 12, `NodeTableCell=${cntType(tblNode, 'NodeTableCell')}`)
+      check('12-磁盘', `表格文字 ${TBL_TEXT} 已落盘`, syT.raw.includes(TBL_TEXT), syT.raw.replace(/\s+/g, ' ').slice(0, 300))
+
+      // 阅读视图 / 再次进编辑器（幂等）
+      const readHtml = await cdp.evalJs(`document.querySelector('.doc-html')?.innerHTML ?? ''`)
+      check('12-阅读', '阅读视图渲染 <table> + 表头 <th>', /<table/.test(readHtml) && /<thead/.test(readHtml) && /<th/.test(readHtml), readHtml.slice(0, 240))
+      check('12-阅读', `阅读视图含表格文字 ${TBL_TEXT}`, readHtml.includes(TBL_TEXT), readHtml.replace(/\s+/g, ' ').slice(0, 240))
+      const rdRows = await cdp.evalJs(`document.querySelectorAll('.doc-html table tr').length`)
+      check('12-阅读', '阅读视图表格 3 行', rdRows === 3, `tr=${rdRows}`)
+      await cdp.screenshot('12-table-read')
+
+      await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」（二次进入）')
+      await cdp.waitFor(`!!document.querySelector('.ProseMirror table')`, 15000, '二次进入编辑器出现表格')
+      const s8 = await tableShape()
+      check('12-表格', '二次进入编辑器：表格结构一致（幂等）', s8?.rows === 3 && s8?.cols === 4 && s8?.th === 4, JSON.stringify(s8))
+
+      // 未改动的表格再保存：应走保真通道，磁盘 sha 不变
+      const before = readSy(tblDoc.box, tblDoc.id)
+      await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' })
+      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '无改动保存后回阅读模式')
+      await sleep(300)
+      const after = readSy(tblDoc.box, tblDoc.id)
+      check('12-磁盘', '未改动的表格保存后 sha256 一致（表格不再被误改）', before.sha === after.sha, `${before.sha} vs ${after.sha}`)
+
+      ctx.table = { doc: tblDoc.id, text: TBL_TEXT, rows: s8?.rows, cols: s8?.cols, th: s8?.th, syNodeTable: cntType(tblNode, 'NodeTableRow'), readHtml: readHtml.includes('<table') }
+    } catch (err) {
+      check('12-表格', '表格插入/编辑/保存链路执行', false, err instanceof Error ? err.message : String(err))
+    } finally {
+      if (tblDoc.id) {
+        try {
+          await postJson(`${API}/doc/delete`, { box: tblDoc.box, id: tblDoc.id })
+          check('12-表格', '清理：测试文档已删除', !existsSync(join(WS, 'data', tblDoc.box, `${tblDoc.id}.sy`)), '')
+        } catch {
+          /* 清理失败不影响结论 */
+        }
+      }
+    }
+  } else {
+    skip('12-表格', '表格链路（编辑模式前置步骤失败）')
+  }
+
   /* --- 10. 前端异常汇总 --- */
   log('\n[10] 前端异常汇总')
   await sleep(300)

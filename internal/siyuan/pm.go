@@ -107,7 +107,13 @@ func NodeToPM(n *Node) map[string]any {
 	case "NodeThematicBreak":
 		return map[string]any{"type": "horizontalRule"}
 	case "NodeTable":
-		// v1：表格只读渲染，编辑器里降级为纯文本（未编辑的块保存时原样保留）
+		// 表格 ⇄ PM 的 table/tableRow/tableHeader|tableCell：思源的表格结构见 Lute
+		// parse/table.go（表头行在 NodeTableHead 里，单元格直接存行内节点）。
+		if pm, ok := tableToPM(n); ok {
+			return pm
+		}
+		// 编辑器表示不了的表（单元格富文本 TableCellRich、单元格里的块级结构）：降级为纯文本。
+		// 前端会把它标记为“不受支持”，未编辑时保存仍走原样复用通道（字节不变）。
 		return pmNode("paragraph", nil, []any{pmText(tableToText(n))})
 	case "NodeParagraph":
 		return pmNode("paragraph", nil, inlineToPM(n.Children))
@@ -134,10 +140,7 @@ func blockToPM(n *Node) map[string]any { return NodeToPM(n) }
 
 func tableToText(t *Node) string {
 	var rows []string
-	for _, row := range t.Children {
-		if row.Type != "NodeTableRow" {
-			continue
-		}
+	for _, row := range TableRows(t) {
 		var cells []string
 		for _, cell := range row.Children {
 			if cell.Type != "NodeTableCell" {
@@ -152,6 +155,93 @@ func tableToText(t *Node) string {
 		rows = append(rows, strings.Join(cells, " | "))
 	}
 	return strings.Join(rows, "\n")
+}
+
+// tableToPM 把思源表格转成 ProseMirror 的 table 节点；无法无损表示时返回 ok=false。
+func tableToPM(t *Node) (map[string]any, bool) {
+	rows := []any{}
+	for _, child := range t.Children {
+		switch child.Type {
+		case "NodeTableHead":
+			for _, row := range child.Children {
+				if row.Type != "NodeTableRow" {
+					continue
+				}
+				pm, ok := tableRowToPM(row, true)
+				if !ok {
+					return nil, false
+				}
+				rows = append(rows, pm)
+			}
+		case "NodeTableRow":
+			pm, ok := tableRowToPM(child, false)
+			if !ok {
+				return nil, false
+			}
+			rows = append(rows, pm)
+		}
+	}
+	if len(rows) == 0 {
+		return nil, false
+	}
+	return pmNode("table", nil, rows), true
+}
+
+func tableRowToPM(row *Node, header bool) (map[string]any, bool) {
+	cells := []any{}
+	name := "tableCell"
+	if header {
+		name = "tableHeader"
+	}
+	for _, cell := range row.Children {
+		if cell.Type != "NodeTableCell" {
+			continue
+		}
+		// 单元格富文本（思源 3.3+ 的多块单元格）：内容在 TableCellRich 里，编辑器表示不了
+		if _, ok := cell.Extra("TableCellRich"); ok {
+			return nil, false
+		}
+		inline, ok := cellInlineToPM(cell)
+		if !ok {
+			return nil, false
+		}
+		colspan, rowspan := cell.TableSpan()
+		attrs := map[string]any{}
+		if colspan > 1 || rowspan > 1 {
+			attrs["colspan"] = colspan
+			attrs["rowspan"] = rowspan
+		}
+		paragraph := pmNode("paragraph", nil, inline)
+		cells = append(cells, pmNodeAttrs(name, attrs, []any{paragraph}))
+	}
+	if len(cells) == 0 {
+		return nil, false
+	}
+	return pmNode("tableRow", nil, cells), true
+}
+
+// cellInlineToPM 取单元格的行内内容：思源单元格直接存行内节点，
+// 早期 Markdown 导入生成的会多包一层 NodeParagraph（多段用 hardBreak 连接）。
+func cellInlineToPM(cell *Node) ([]any, bool) {
+	var parts [][]*Node
+	for _, c := range cell.Children {
+		switch {
+		case c.Type == "NodeParagraph":
+			parts = append(parts, c.Children)
+		case c.IsInline():
+			parts = append(parts, []*Node{c})
+		default:
+			return nil, false // 嵌套表格等块级结构：编辑器表示不了
+		}
+	}
+	out := []any{}
+	for i, part := range parts {
+		if i > 0 {
+			out = append(out, map[string]any{"type": "hardBreak"})
+		}
+		out = append(out, inlineToPM(part)...)
+	}
+	return out, true
 }
 
 func inlineChildrenOf(b *Node) []*Node {
@@ -315,6 +405,17 @@ func pmNodeToSyNodes(m map[string]any) []*Node {
 		p := NewBlock("NodeParagraph", "")
 		p.AppendNode(pmImageToSy(m))
 		return []*Node{p}
+	case "table":
+		if n, ok := pmTableToSy(m); ok {
+			return []*Node{n}
+		}
+		txt := pmPlainText(m)
+		if strings.TrimSpace(txt) == "" {
+			return nil
+		}
+		p := NewBlock("NodeParagraph", "")
+		p.AppendNode(NewText(txt))
+		return []*Node{p}
 	case "text", "hardBreak":
 		// 裸行内节点：包一个段落
 		p := NewBlock("NodeParagraph", "")
@@ -336,6 +437,103 @@ func pmNodeToSyNodes(m map[string]any) []*Node {
 		p := NewBlock("NodeParagraph", "")
 		p.AppendNode(NewText(txt))
 		return []*Node{p}
+	}
+}
+
+// pmTableToSy 把编辑器回传的表格还原成思源结构：表头行进 NodeTableHead，其余行在表格下。
+// 列宽（colgroup）与单元格对齐由 ApplyBlocks 在列数不变时从原节点搬回来。
+func pmTableToSy(m map[string]any) (*Node, bool) {
+	table := NewBlock("NodeTable", "")
+	var head *Node
+	body := false
+	for _, item := range pmContent(m) {
+		row := pmChild(item)
+		if t := pmNodeType(row); t != "tableRow" && t != "tableHeader" {
+			continue
+		}
+		cells, header := pmTableRowCells(row)
+		if len(cells) == 0 {
+			continue
+		}
+		tr := NewTabular("NodeTableRow", cells)
+		if header && !body {
+			if head == nil {
+				head = NewTabular("NodeTableHead", nil)
+			}
+			head.Children = append(head.Children, tr)
+			continue
+		}
+		// 表头行出现在正文行之后（编辑器允许）：按普通行处理
+		body = true
+		table.Children = append(table.Children, tr)
+	}
+	if head == nil && len(table.Children) == 0 {
+		return nil, false
+	}
+	if head != nil {
+		table.Children = append([]*Node{head}, table.Children...)
+	}
+	return table, true
+}
+
+func pmTableRowCells(row map[string]any) ([]*Node, bool) {
+	var cells []*Node
+	header := false
+	first := true
+	for _, item := range pmContent(row) {
+		cell := pmChild(item)
+		name := pmNodeType(cell)
+		if name != "tableCell" && name != "tableHeader" {
+			continue
+		}
+		if first {
+			header = name == "tableHeader"
+			first = false
+		}
+		colspan := pmIntAttr(cell, "colspan", 1)
+		rowspan := pmIntAttr(cell, "rowspan", 1)
+		cells = append(cells, NewTableCell(colspan, rowspan, pmCellInlineToSy(cell)))
+	}
+	return cells, header
+}
+
+// pmCellInlineToSy 取单元格里的行内内容（思源单元格只存行内节点，多段用软换行连接）。
+func pmCellInlineToSy(cell map[string]any) []*Node {
+	var out []*Node
+	for _, item := range pmContent(cell) {
+		block := pmChild(item)
+		if len(out) > 0 {
+			out = append(out, NewSoftBreak())
+		}
+		if pmNodeType(block) == "paragraph" {
+			out = append(out, pmInlineToSy(pmContent(block))...)
+			continue
+		}
+		out = append(out, pmInlineToSy([]any{block})...)
+	}
+	return out
+}
+
+// preserveTableFormat 表格被编辑器重建后沿用原排版：列数不变时搬回每列对齐与单元格对齐
+// （列宽 colgroup 存在表节点的 Properties 里，随 Properties 克隆已经保留）。
+func preserveTableFormat(orig, fresh *Node) {
+	if TableColumns(orig) != TableColumns(fresh) {
+		return
+	}
+	if len(orig.TableAligns) > 0 {
+		fresh.TableAligns = append([]int(nil), orig.TableAligns...)
+	}
+	origRows, freshRows := TableRows(orig), TableRows(fresh)
+	for i := range freshRows {
+		if i >= len(origRows) {
+			break
+		}
+		for j, cell := range freshRows[i].Children {
+			if j >= len(origRows[i].Children) {
+				break
+			}
+			cell.TableCellAlign = origRows[i].Children[j].TableCellAlign
+		}
 	}
 }
 
@@ -600,9 +798,14 @@ func ApplyBlocks(doc *Node, blocks []BlockIn) bool {
 		}
 		first := nodes[0]
 		first.ID = keepID
-		if o, ok := orig[keepID]; ok && o.Props() != nil {
-			// 保留原有 Properties（含自定义属性），只刷新 id
-			first.props = o.Props().Clone()
+		if o, ok := orig[keepID]; ok {
+			if o.Props() != nil {
+				// 保留原有 Properties（含自定义属性、表格的 colgroup 列宽），只刷新 id
+				first.props = o.Props().Clone()
+			}
+			if o.Type == "NodeTable" && first.Type == "NodeTable" {
+				preserveTableFormat(o, first)
+			}
 		}
 		if first.Props() == nil {
 			first.props = NewProps()
