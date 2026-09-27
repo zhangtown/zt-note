@@ -162,9 +162,17 @@ CI（`.github/workflows/ci.yml`）：Go vet + 单测、前端类型检查/build/
 
 ## 品牌标识
 
-「云栖笔记」标识是 `ui/src/logo.ts` 里的一段内联 SVG（与应用图标 `tools/mkicon` 同款：深蓝渐变圆角方块 + 白色书脊与纸页 + 蓝色文字线；
+「云栖笔记」标识是 `ui/src/logo.ts` 里的一段内联 SVG（与应用图标 `tools/mkicon` 同一套几何：浅蓝渐变圆角底 +
+磨砂玻璃文档 + 顶部一朵白云，带柔和投影与极淡描边，跟飞牛官方应用图标一个路数——浅底、通透、只在主体上给一处高饱和）；
 矢量而非位图，任何尺寸清晰，不额外请求文件）。用到的地方：首页顶部（`views/home.ts`）、PIN 门（`views/gate.ts`）、
 启动失败页（`app.ts` 的 `bootError`），以及 favicon（`main.ts` 启动时 `applyFavicon()` 注入 data URI）。
+应用图标（应用中心列表、桌面、favicon 的 PNG 源）由 `tools/mkicon` 逐像素渲染，一次写出
+`ICON.PNG`(64) / `ICON_256.PNG`(256) / `app/ui/images/icon_{64,256}.png` 四份：
+
+```bash
+go run ./tools/mkicon            # 纯标准库，无第三方依赖；改设计只改 tools/mkicon/main.go
+bash build.sh fpk                # 打包时也会自动重生成一遍图标
+```
 顶栏与侧栏都不再放 logo/品牌名（首页 hero 里已经有，重复）——顶栏的宽度留给目录按钮与搜索框，
 侧栏顶部是「🏠 首页」导航项（`app.ts` 的 `.tree-nav-item`），它是顶栏去掉品牌后唯一的回首页入口。
 
