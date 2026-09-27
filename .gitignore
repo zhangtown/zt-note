@@ -21,3 +21,13 @@ Thumbs.db
 
 # 打包中间产物（pack.sh 每次重建）
 deploy/fnos-app/zt-note/app/bin/
+
+# 本机 NAS 连接信息（照 nas.env.example 填）
+deploy/fnos-app/nas.env
+
+# 测试脚本的本机参数（示例库路径 / 期望值 / 笔记标题；照 e2e-live.local.example.json 填）
+ui/scripts/e2e-live.local.json
+
+# 自动生成的联调报告（每次跑 e2e 重建，不入仓库）
+ui/E2E-LIVE-REPORT.md
+ui/BUILD-REPORT.md

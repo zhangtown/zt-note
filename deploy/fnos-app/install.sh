@@ -4,8 +4,8 @@
 #   bash deploy/fnos-app/install.sh              # 默认：版本号 patch+1 后打包并安装
 #   bash deploy/fnos-app/install.sh --no-bump    # 用当前版本号（首次安装用）
 #
-# 环境变量（都有默认值）：
-#   NAS=user@your-nas.local   NAS_PORT=2288   NAS_KEY=~/.ssh/id_ed25519   NAS_VOL=1
+# 环境变量（推荐写进 deploy/fnos-app/nas.env，见同目录 nas.env.example；该文件不入仓库）：
+#   NAS=user@host   NAS_PORT=22   NAS_KEY=~/.ssh/id_ed25519   NAS_VOL=1
 #
 # 前置条件：
 #   - 本机私钥可免密登录 NAS
@@ -18,10 +18,20 @@
 set -e
 cd "$(dirname "$0")/../.."
 
-NAS="${NAS:-user@your-nas.local}"
-NAS_PORT="${NAS_PORT:-2288}"
+# NAS 连接信息：优先环境变量，其次 deploy/fnos-app/nas.env（自建、已被 .gitignore 忽略）
+if [ -f deploy/fnos-app/nas.env ]; then
+  # shellcheck disable=SC1091
+  . deploy/fnos-app/nas.env
+fi
+NAS="${NAS:-}"
+NAS_PORT="${NAS_PORT:-22}"
 NAS_KEY="${NAS_KEY:-$HOME/.ssh/id_ed25519}"
 NAS_VOL="${NAS_VOL:-1}"
+if [ -z "$NAS" ]; then
+  echo "缺少 NAS 连接信息：把 deploy/fnos-app/nas.env.example 复制为 deploy/fnos-app/nas.env 并填自己的 NAS" >&2
+  echo "（也可临时用环境变量：NAS=user@host NAS_PORT=22 NAS_KEY=~/.ssh/xxx bash deploy/fnos-app/install.sh）" >&2
+  exit 2
+fi
 SSH=(ssh -i "$NAS_KEY" -p "$NAS_PORT" -o BatchMode=yes -o ConnectTimeout=8 "$NAS")
 SCP=(scp -i "$NAS_KEY" -P "$NAS_PORT" -o BatchMode=yes)
 

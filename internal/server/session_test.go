@@ -518,7 +518,7 @@ func TestHTTPPinRevoke(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 		}
 		req.Header.Set("X-Trim-Userid", "1000")
-		req.Header.Set("X-Trim-Username", "zhangtown")
+		req.Header.Set("X-Trim-Username", "tester")
 		req.Header.Set("X-Trim-Isadmin", "true")
 		if cookie != nil {
 			req.AddCookie(cookie)

@@ -1,0 +1,13 @@
+{
+  "_说明": "复制成 ../../.test/e2e-live.local.json 并按自己的示例库改。它已被 .gitignore 忽略，不会进仓库；也可以用同名环境变量代替（见 e2e-live.mjs 顶部注释）。",
+  "siyuanData": "/path/to/siyuan/workspace/data",
+  "notebooks": 2,
+  "docs": 12,
+  "blocks": 227,
+  "assets": 22,
+  "boxes": ["笔记本A", "笔记本B"],
+  "docBox": "笔记本A",
+  "docTitle": "示例文档标题",
+  "readText": ["正文里必然出现的一句话", "另一个关键片段"],
+  "docHash": "boxId/docId"
+}

@@ -166,7 +166,7 @@ func documentJSON(children []string) string {
 	return `{
 		"ID": "20250604143405-29orui7",
 		"Type": "NodeDocument",
-		"Properties": {"id": "20250604143405-29orui7", "title": "示例文稿", "type": "doc"},
+		"Properties": {"id": "20240101000001-testdoc", "title": "示例文档", "type": "doc"},
 		"Children": [` + strings.Join(children, ",") + `]
 	}`
 }

@@ -3,7 +3,7 @@
 ## 1. 打包
 
 ```bash
-cd <项目根>     # 或你在 Linux/macOS 上的项目根
+cd <你的项目根>
 bash deploy/fnos-app/pack.sh           # 已有前端产物时
 bash deploy/fnos-app/pack.sh UI=1      # 先 cd ui && npm run build
 ```
@@ -33,6 +33,9 @@ bash deploy/fnos-app/pack.sh UI=1      # 先 cd ui && npm run build
 ```bash
 bash deploy/fnos-app/install.sh          # 打包(版本号 patch+1) → scp → install-local → 验证
 bash deploy/fnos-app/install.sh --no-bump   # 首次安装：用当前版本号
+
+# 连接信息（NAS 地址 / 端口 / 私钥 / 卷号）写在 deploy/fnos-app/nas.env 里，照 nas.env.example 建一份；
+# 该文件已被 .gitignore 忽略。也可以用环境变量临时覆盖：NAS=user@host NAS_PORT=22 NAS_KEY=~/.ssh/xxx
 ```
 
 手写等价命令如下（注意 `install-fpk` 对已装应用无效，见第 5 节）：

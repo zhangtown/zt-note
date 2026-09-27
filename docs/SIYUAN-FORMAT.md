@@ -58,7 +58,7 @@ zt-note 以**思源的 .sy JSON 为原生存储格式**，目标是：导入的�
 
 ## 渲染规则（.sy → HTML / Markdown）
 
-与 `示例工作区/convert_siyuan_to_md.py` 一致（该脚本已实测跑通 12 篇笔记）：
+与参考转换脚本 `convert_siyuan_to_md.py` 一致（该脚本已实测跑通 12 篇笔记）：
 
 - 段落 → `<p>`；标题 → `<h1..h6>`；引用 → `<blockquote>`；列表 → `<ul>/<ol><li>`；
   代码块 → `<pre><code class="language-x">`（HTML 转义）；图片 → `<img src="assets/...">`；

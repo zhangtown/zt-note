@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	testBox   = "20250708095329-8rxeagf"
-	testDocID = "20250604143405-29orui7"
+	testBox   = "20240101000000-testbox"
+	testDocID = "20240101000001-testdoc"
 	testAsset = "一月-20250604085900-o62voq2.png"
 	testRef   = "assets/" + testAsset
 )
@@ -26,7 +26,7 @@ const (
 // syDoc 造一份最小思源文档：段落里一张图，引用 ref。
 func syDoc(ref string) string {
 	return `{"ID":"` + testDocID + `","Spec":"1","Type":"NodeDocument",` +
-		`"Properties":{"id":"` + testDocID + `","title":"示例文稿","type":"doc"},` +
+		`"Properties":{"id":"` + testDocID + `","title":"示例文档","type":"doc"},` +
 		`"Children":[{"ID":"20250604063404-nhmlm42","Type":"NodeParagraph",` +
 		`"Properties":{"id":"20250604063404-nhmlm42"},"Children":[` +
 		`{"Type":"NodeText","Data":"1月"},` +
@@ -39,7 +39,7 @@ func siyuanZip(t *testing.T) *zip.Reader {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	files := map[string]string{
-		".siyuan/conf.json":               `{"name":"示例笔记本"}`,
+		".siyuan/conf.json":               `{"name":"测试笔记本"}`,
 		testBox + "/" + testDocID + ".sy": syDoc(testRef),
 		"assets/" + testAsset:             "PNG-新图",
 	}

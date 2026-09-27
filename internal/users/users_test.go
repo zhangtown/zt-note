@@ -17,7 +17,7 @@ func TestParse(t *testing.T) {
 		wantAdmin  bool
 		wantLocal  bool
 	}{
-		{name: "网关正常身份", uid: "1000", uname: "zhangtown", admin: "true", wantUID: "1000", wantName: "zhangtown", wantAdmin: true},
+		{name: "网关正常身份", uid: "1000", uname: "tester", admin: "true", wantUID: "1000", wantName: "tester", wantAdmin: true},
 		{name: "非管理员", uid: "1002", uname: "guest", admin: "false", wantUID: "1002", wantName: "guest"},
 		{name: "缺用户名时用 uid 顶", uid: "1000", uname: "", admin: "true", wantUID: "1000", wantName: "1000", wantAdmin: true},
 		{name: "没有身份头 → local", uid: "", uname: "", admin: "", wantUID: LocalUID, wantName: LocalUID, wantLocal: true},

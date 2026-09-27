@@ -79,7 +79,7 @@
 
 导入识别细节：
 - **思源格式**：zip 内 `<boxID>/<docID>.sy`（可带一层 `data/` 前缀），`.siyuan/conf.json` → 笔记本名；`assets/*` → `data/assets/`（**按原名**，同名冲突才改名并改写文档内引用，否则 `.sy` 里的图片会 404）。
-- **markdown 格式**：`<笔记本名>/<标题>.md` + `assets/*`（即 示例工作区/markdown-export 的结构），逐个转 .sy。
+- **markdown 格式**：`<笔记本名>/<标题>.md` + `assets/*`（即思源「导出 Markdown」包的结构），逐个转 .sy。
 - 单文件 `.md`（如「全部笔记汇总.md」）→ 建一个同名笔记本，按一级标题拆成多篇文档。
 
 ## 会话与 PIN

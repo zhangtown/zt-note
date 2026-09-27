@@ -11,7 +11,7 @@
 //   --keep-ws      不删除 .test/uiws（默认每次重建，保证幂等）
 //   --keep-server  结束后保留后端进程（默认杀掉）
 //
-// 只读产品代码，不修改 ui/src、internal、cmd。发现的问题写进 ui/E2E-LIVE-REPORT.md。
+// 只读产品代码，不修改 ui/src、internal、cmd。发现的问题写进 .test/E2E-LIVE-REPORT.md（不入仓库）。
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
@@ -26,7 +26,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inflateRawSync } from 'node:zlib'
@@ -44,7 +44,7 @@ const USER = 'local'
 const USER_WS = join(WS, 'users', USER, 'workspace')
 const SHOTS = join(TEST, 'e2e-live-shots')
 const SERVER_LOG = join(TEST, 'e2e-live-server.log')
-const REPORT = join(ROOT, 'ui', 'E2E-LIVE-REPORT.md')
+const REPORT = join(TEST, 'E2E-LIVE-REPORT.md')
 const EXPORT_ZIP = join(TEST, 'e2e-live-export-siyuan.zip')
 const EXPORT_MD_ZIP = join(TEST, 'e2e-live-export-md.zip')
 
@@ -78,15 +78,53 @@ const MIME = {
   '.map': 'application/json; charset=utf-8',
 }
 
-const SIYUAN_DATA = 'C:/Users/USER/Documents/kimi/Workspaces/示例工作区/data'
-const EXPECT_STATS = { notebooks: 2, docs: 12, blocks: 227, assets: 22 }
+/* ===== 示例库参数 =====
+ * 这套 e2e 需要一个「示例思源库」：导入它，然后校验导入/浏览/编辑/导出整条链路。
+ * 参数不写在代码里（避免把个人路径与笔记内容带进仓库），从下面二者取，前者优先：
+ *   1) .test/e2e-live.local.json（已被 .gitignore 忽略，本机专用）；格式见 e2e-live.local.example.json
+ *   2) 同名环境变量：SIYUAN_DATA / EXPECT_NOTEBOOKS / EXPECT_DOCS / EXPECT_BLOCKS / EXPECT_ASSETS /
+ *      SAMPLE_BOXES（逗号分隔，第一个是示例文档所在笔记本）/ SAMPLE_DOC_BOX / DOC_TITLE /
+ *      READ_TEXT（逗号分隔）/ DOC_HASH（「boxId/docId」）。
+ */
+const LOCAL = (() => {
+  const f = join(TEST, 'e2e-live.local.json')
+  if (!existsSync(f)) return {}
+  try {
+    return JSON.parse(readFileSync(f, 'utf8'))
+  } catch (err) {
+    console.error(`读取 ${f} 失败：${err instanceof Error ? err.message : String(err)}`)
+    process.exit(2)
+  }
+})()
+const cfg = (key, envName) => LOCAL[key] ?? process.env[envName] ?? ''
+const cfgList = (key, envName) => {
+  const v = LOCAL[key] ?? (process.env[envName] ? String(process.env[envName]).split(',') : [])
+  return (Array.isArray(v) ? v : [v]).map((s) => String(s).trim()).filter(Boolean)
+}
+
+const SIYUAN_DATA = String(cfg('siyuanData', 'SIYUAN_DATA')).replace(/[\\/]+$/, '')
+const EXPECT_STATS = {
+  notebooks: Number(cfg('notebooks', 'EXPECT_NOTEBOOKS')) || 0,
+  docs: Number(cfg('docs', 'EXPECT_DOCS')) || 0,
+  blocks: Number(cfg('blocks', 'EXPECT_BLOCKS')) || 0,
+  assets: Number(cfg('assets', 'EXPECT_ASSETS')) || 0,
+}
+const SAMPLE_BOXES = cfgList('boxes', 'SAMPLE_BOXES')
+const DOC_TITLE = String(cfg('docTitle', 'DOC_TITLE'))
+const READ_TEXT = cfgList('readText', 'READ_TEXT')
+const DOC_HASH = String(cfg('docHash', 'DOC_HASH'))
+const SEARCH_TERM = String(cfg('searchTerm', 'SEARCH_TERM')) || READ_TEXT[0]
+if (!SIYUAN_DATA || !DOC_TITLE || !READ_TEXT.length || !DOC_HASH) {
+  console.error('缺少示例库参数：请创建 .test/e2e-live.local.json（可照抄 ui/scripts/e2e-live.local.example.json），')
+  console.error('或设置环境变量 SIYUAN_DATA / DOC_TITLE / READ_TEXT / DOC_HASH。')
+  process.exit(2)
+}
 // 第一次进入会白送一个「我的笔记」+ 一篇欢迎文档，盘点时要算进去
 const WELCOME_BOX = '我的笔记'
 const EXPECT_BOXES = EXPECT_STATS.notebooks + 1
 const EXPECT_DOCS = EXPECT_STATS.docs + 1
-const TEST_PIN = '135790'
-const DOC_TITLE = '示例文档'
-const READ_TEXT = ['正文片段', '示例数值']
+// 示例文档所在笔记本（导入库里的第一个笔记本）；注意标题常量来自 .test/e2e-live.local.json
+const DOC_BOX = String(cfg('docBox', 'SAMPLE_DOC_BOX'))const TEST_PIN = '135790'
 
 const argv = new Set(process.argv.slice(2))
 const FORCE_BUILD = argv.has('--build')
@@ -253,7 +291,12 @@ function newestMtime(dir, ignore = new Set(['node_modules', '.git', '.test'])) {
 }
 
 function resolveGo() {
-  const candidates = ['C:/Users/USER/go-sdk/go/bin/go.exe', 'C:/Users/USER/go-sdk/go/bin/go']
+  const candidates = [
+    process.env.GO_BIN,
+    process.env.GOROOT ? join(process.env.GOROOT, 'bin', process.platform === 'win32' ? 'go.exe' : 'go') : '',
+    join(homedir(), 'go-sdk', 'go', 'bin', process.platform === 'win32' ? 'go.exe' : 'go'),
+    'go',
+  ].filter(Boolean)
   for (const c of candidates) if (existsSync(c)) return c
   return 'go'
 }
@@ -325,7 +368,7 @@ function buildBackend() {
   log(`  构建后端（原因：${reason}）…`)
   const go = resolveGo()
   const env = { ...process.env }
-  env.PATH = `C:/Users/USER/go-sdk/go/bin;${env.PATH ?? ''}`
+  env.PATH = `${dirname(go)}${process.platform === 'win32' ? ';' : ':'}${env.PATH ?? ''}`
   const t0 = Date.now()
   const r = spawnSync(go, ['build', '-o', EXE, './cmd/ztnote'], { cwd: ROOT, env, encoding: 'utf8' })
   if (r.status !== 0) {
@@ -992,7 +1035,7 @@ function buildReport(ctx) {
   lines.push('')
   lines.push('```')
   if (ctx.search) {
-    lines.push(`搜索「贷款」：后端 api/search 命中 ${ctx.search.apiHits?.length ?? '-'} 条；页面标题 = ${JSON.stringify(ctx.search.pageTitle)}`)
+    lines.push(`搜索「${SEARCH_TERM}」：后端 api/search 命中 ${ctx.search.apiHits?.length ?? '-'} 条；页面标题 = ${JSON.stringify(ctx.search.pageTitle)}`)
     if (ctx.search.apiHits?.length) lines.push(`api/search 原始首条：${JSON.stringify(ctx.search.apiHits[0])}`)
     lines.push(`首条命中：${clip(ctx.search.firstHit, 300)}；卡片 tooltip = ${JSON.stringify(ctx.search.tooltip)}`)
     lines.push(`点击后打开文档 = ${JSON.stringify(ctx.search.openedTitle)}（hash=${ctx.search.hash}）`)
@@ -1247,14 +1290,14 @@ async function main() {
     ctx.fatal = '定位目标文档'
     return
   }
-  if (target.boxName !== '示例笔记本') {
+  if (DOC_BOX && target.boxName !== DOC_BOX) {
     bug(
-      `《${DOC_TITLE}》实际归属 ${target.boxName}，与任务描述的「示例笔记本 下的《示例文档》」不一致`,
-      '任务书写的是点击「示例笔记本」下的《示例文档》，实际该文档在另一个笔记本下',
+      `《${DOC_TITLE}》实际归属 ${target.boxName}，与预期笔记本「${DOC_BOX}」不一致`,
+      '示例库配置里的示例文档换了笔记本（改 .test/e2e-live.local.json 的 boxes[0]/docBox 即可）',
       `curl -s "${API}/doc?box=${target.box}&id=${target.id}"`,
-      '示例文档 位于 示例笔记本（box 20250708095329-8rxeagf）',
+      `${DOC_TITLE} 位于 ${DOC_BOX}`,
       `实际 box=${target.box}（${target.boxName}），已按实际路径点击`,
-      '数据本身（示例工作区/data/<box>/<doc>.sy），非代码 bug',
+      '示例库数据本身（<data>/<box>/<doc>.sy），非代码 bug',
     )
   }
   ctx.docBox = target.box
@@ -1482,7 +1525,7 @@ async function main() {
   check('3-品牌', '侧栏不放品牌（首页 hero 已有标识）；只留「首页」导航项', !!pageInfo.sidebarNav && /首页/.test(pageInfo.sidebarNav.text) && pageInfo.sidebarBrand === null && !pageInfo.sidebarButtons.some((t) => t === '云记笔记'), JSON.stringify({ sidebarNav: pageInfo.sidebarNav, sidebarBrand: pageInfo.sidebarBrand, sidebarButtons: pageInfo.sidebarButtons }))
   check('3-品牌', '「首页」导航项当前高亮（在首页），且顶栏没有品牌名', pageInfo.sidebarNav?.active === true && !/zt-note|云记笔记/.test(pageInfo.topbarText ?? ''), JSON.stringify({ nav: pageInfo.sidebarNav, topbarText: pageInfo.topbarText }))
   check('3-页面', '顶栏版本号来自真实后端 health（不是「连接中…」）', /^v/.test(pageInfo.version ?? ''), `version 区文案=${JSON.stringify(pageInfo.version)}`)
-  check('3-树', `文档树渲染 ${EXPECT_BOXES} 个笔记本且含 笔记本A / 示例笔记本 / ${WELCOME_BOX}`, pageInfo.notebooks.length === EXPECT_BOXES && pageInfo.notebooks.includes('笔记本A') && pageInfo.notebooks.includes('示例笔记本') && pageInfo.notebooks.includes(WELCOME_BOX), JSON.stringify(pageInfo.notebooks))
+  check('3-树', `文档树渲染 ${EXPECT_BOXES} 个笔记本且含 ${SAMPLE_BOXES.join(' / ')} / ${WELCOME_BOX}`, pageInfo.notebooks.length === EXPECT_BOXES && SAMPLE_BOXES.every((b) => pageInfo.notebooks.includes(b)) && pageInfo.notebooks.includes(WELCOME_BOX), JSON.stringify(pageInfo.notebooks))
   check('3-树', `笔记本展开后渲染 ${EXPECT_DOCS} 个文档条目且含《${DOC_TITLE}》（含首次进入的欢迎文档）`, pageInfo.docs.length === EXPECT_DOCS && pageInfo.docs.includes(DOC_TITLE), `${pageInfo.docs.length} 条：${pageInfo.docs.slice(0, 14).join('、')}`)
   await cdp.screenshot('01-home')
 
@@ -1563,8 +1606,9 @@ async function main() {
   const jarBack = await getJson(`${API}/tree`)
   check('3b-PIN管理', '脚本重新解锁后接口恢复（后续步骤继续可用）', Array.isArray(jarBack.notebooks), `notebooks=${(jarBack.notebooks ?? []).length}`)
 
-  /* --- 4. 点击《示例文档》查看正文 --- */
-  log('\n[4] 点击文档树打开《示例文档》')
+  /* --- 4. 点击示例文档查看正文 --- */
+  log(`
+[4] 点击文档树打开《${DOC_TITLE}》`)
   await cdp.clickElement(treeDocRow(DOC_TITLE), `文档树《${DOC_TITLE}》`)
   await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '文档打开（编辑器 .ProseMirror 出现）')
   const readInfo = await cdp.evalJs(`(() => ({
@@ -1600,7 +1644,7 @@ async function main() {
       count: document.querySelectorAll('.ProseMirror > *').length,
     }))()`)
     check('5-编辑', '进入编辑模式（TipTap 渲染 + 块数一致）', editorInfo.count === (docResp.blocks ?? []).length, `编辑器顶层节点=${editorInfo.count}，后端 blocks=${(docResp.blocks ?? []).length}，状态栏=${JSON.stringify(editorInfo.blocks)}`)
-    check('5-编辑', `首个段落初始文本与后端一致`, editorInfo.firstP.includes('正文片段'), `实际=${JSON.stringify(editorInfo.firstP.slice(0, 60))}`)
+    check('5-编辑', `首个段落初始文本与后端一致`, editorInfo.firstP.includes(READ_TEXT[0]), `实际=${JSON.stringify(editorInfo.firstP.slice(0, 60))}`)
 
     // 选中第一个段落的全部文本，再用真实输入管道替换
     const sel = await cdp.evalJs(`(() => {
@@ -1649,7 +1693,7 @@ async function main() {
     await cdp.pressKey('z', { code: 'KeyZ', vk: 90, modifiers: 2, text: '' })
     await sleep(500)
     const undone = await cdp.evalJs(`(document.querySelector('.ProseMirror p') && document.querySelector('.ProseMirror p').textContent) || ''`)
-    check('5-撤销', 'Ctrl+Z 能撤销回原文（改动可撤销）', undone !== NEW_TEXT && undone.includes('正文片段'), `撤销后首段=${JSON.stringify(undone.slice(0, 60))}`)
+    check('5-撤销', 'Ctrl+Z 能撤销回原文（改动可撤销）', undone !== NEW_TEXT && undone.includes(READ_TEXT[0]), `撤销后首段=${JSON.stringify(undone.slice(0, 60))}`)
     await cdp.pressKey('Z', { code: 'KeyZ', vk: 90, modifiers: 10, text: '' })
     await sleep(500)
     const redone = await cdp.evalJs(`(document.querySelector('.ProseMirror p') && document.querySelector('.ProseMirror p').textContent) || ''`)
@@ -1795,7 +1839,7 @@ async function main() {
   log('\n[8] 搜索并跳转（整篇命中 + 块级定位）')
   try {
     await cdp.clickElement(`document.querySelector('.search-input')`, '顶栏搜索框')
-    await cdp.insertText('贷款')
+    await cdp.insertText(SEARCH_TERM)
     await cdp.pressKey('Enter', { code: 'Enter', vk: 13, text: '\r' })
     await cdp.waitFor(`!!document.querySelector('.search-hit') || !!document.querySelector('.empty-box')`, 15000, '搜索结果或空态出现')
     const s = await cdp.evalJs(`(() => ({
@@ -1807,10 +1851,10 @@ async function main() {
       hash: location.hash,
     }))()`)
     ctx.search = { pageTitle: s.pageTitle, hits: s.hits, firstHit: s.first, tooltip: s.firstTip }
-    const searchApi = await getJson(`${API}/search?q=${encodeURIComponent('贷款')}&limit=50`)
+    const searchApi = await getJson(`${API}/search?q=${encodeURIComponent(SEARCH_TERM)}&limit=50`)
     const apiHits = searchApi.hits ?? []
     ctx.search.apiHits = apiHits.map((h) => ({ id: h.id, title: h.title, blockId: h.blockId, snippet: clip(h.snippet ?? '', 60) }))
-    check('8-搜索', `搜索页标题 = ${JSON.stringify(s.pageTitle)}`, s.pageTitle.includes('搜索：贷款'), `meta=${s.meta}`)
+    check('8-搜索', `搜索页标题 = ${JSON.stringify(s.pageTitle)}`, s.pageTitle.includes(`搜索：${SEARCH_TERM}`), `meta=${s.meta}`)
     check('8-搜索', '搜索结果至少 1 条', s.hits >= 1, `命中 ${s.hits} 条；首条=${clip(s.first, 160)}`)
     // 契约：标题命中 = 整篇命中 → blockId 为空（思源的文档 ID 不是任何块的 data-node-id）
     check('8-搜索', '标题命中 blockId 为空（整篇命中）', apiHits.length > 0 && apiHits.every((h) => !h.blockId), `apiHits=${JSON.stringify(apiHits.slice(0, 2))}`)
@@ -1870,10 +1914,10 @@ async function main() {
       }
     } else {
       bug(
-        '搜索「贷款」没有结果',
+        `搜索「${SEARCH_TERM}」没有结果`,
         '顶栏搜索回车后页面无命中',
-        `curl -s "${API}/search?q=贷款&limit=5"`,
-        'hits 至少 1 条（示例文档）',
+        `curl -s "${API}/search?q=${encodeURIComponent(SEARCH_TERM)}&limit=5"`,
+        `hits 至少 1 条（${DOC_TITLE}）`,
         `前端命中 ${s.hits} 条`,
         'ui/src/views/search.ts、internal/store/store.go Search',
       )
@@ -2080,12 +2124,13 @@ async function main() {
   }
 
   /* --- 11b. 图片行排版：思源 parent-style 宽度还原成「一行四张」--- */
-  log('\n[11b] 图片行排版（阅读视图，《示例文稿》）')
+  log('
+[11b] 图片行排版（阅读视图，示例文档）')
   try {
     await nav(APP_URL, '回到应用首页')
     await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
     // 直接走 hash 路由，不依赖文档树展开状态
-    await cdp.evalJs(`location.hash = '#/doc/20250708095329-8rxeagf/20250604143405-29orui7'`)
+    await cdp.evalJs(`location.hash = '#/doc/${DOC_HASH}'`)
     await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 20000, '文档打开')
     // 图片行是「后端渲染」时的布局：编辑器里它就是普通段落 + 图片（块本身可编辑），
     // 所以这里不再期待 is-warn 警告，而是核实编辑视图可用 + 原样预览仍是一行四张
