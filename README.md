@@ -65,8 +65,8 @@ bash deploy/fnos-app/install.sh       # 打包 + 上传 + 安装/升级 + 验证
 无效这个坑）与 NAS 部署步骤见 [`deploy/README.md`](deploy/README.md)。
 
 不想自己构建就直接下：**[Releases](https://github.com/zhangtown/zt-note/releases)** 里有每个版本
-的 `zt-note_x.y.z.fpk`（飞牛 → 应用中心 → 手动安装），附件附 SHA-256。
-注意仓库是私库，下载需要在浏览器里登录有权限的 GitHub 账号。
+的 `zt-note_x.y.z.fpk`（飞牛 → 应用中心 → 手动安装），附件附 SHA-256。仓库是公开的，不用登录，
+命令行也行：`gh release download v0.6.4 -R zhangtown/zt-note`。
 
 CI（`.github/workflows/ci.yml`）：Go vet + 单测、前端类型检查/build/逻辑测试、`build.sh all`
 产 fpk 并作为 artifact 上传。`internal/webui/dist` 不入库，仓库里只放一个 `.gitkeep`
