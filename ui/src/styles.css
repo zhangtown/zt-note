@@ -87,6 +87,9 @@ a {
   height: 100%;
   display: grid;
   grid-template-rows: var(--topbar-h) 1fr;
+  /* 显式写死单列：否则隐式列的 auto 会被顶栏的最小内容宽（约 870px）撑开，
+     窄屏下整页跟着变宽（手机上就“比屏幕稍微大一点”）*/
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .shell-body {
@@ -144,37 +147,37 @@ a {
   margin: 0 3px;
 }
 
-.brand {
+/* 云记笔记标识（SVG 由 src/logo.ts 生成） */
+.logo-mark {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 7px;
-  padding: 3px 6px;
+}
+
+.logo-mark svg {
+  display: block;
+}
+
+/* 侧栏顶部的品牌行（也是窄屏抽屉里的「回首页」入口） */
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 6px 8px;
   border: 0;
-  background: transparent;
   border-radius: var(--radius);
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-align: left;
   cursor: pointer;
 }
 
-.brand:hover {
+.sidebar-brand:hover {
   background: var(--panel-soft);
-}
-
-.brand-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: linear-gradient(160deg, #2563eb, #4f8bff);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-}
-
-.brand-name {
-  font-weight: 600;
-  letter-spacing: 0.2px;
 }
 
 .search-input {
@@ -437,9 +440,21 @@ a {
 }
 
 .home-title {
-  margin: 0 0 6px;
-  font-size: 22px;
+  margin: 0;
+  font-size: 21px;
   letter-spacing: 0.3px;
+}
+
+/* 首页顶部：云记笔记标识 + 名字（顶栏不再放 logo，这里就是它在页面里的位置） */
+.home-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.home-tagline {
+  font-size: 12.5px;
 }
 
 .home-sub {
@@ -715,7 +730,7 @@ a {
   pointer-events: none;
 }
 
-/* 窄屏（≤720px）规则统一放在文件末尾的「窄屏适配」一节 */
+/* 窄屏（≤900px）规则统一放在文件末尾的「窄屏适配」一节 */
 
 .prose a {
   text-decoration: underline;
@@ -1329,10 +1344,13 @@ mark {
   }
 }
 
-/* ---------------- 窄屏适配（手机 / 竖屏小窗） ----------------
-   宽度 ≤720px 时：左侧栏变成抽屉，顶栏只留 ☰ / 搜索框 / ⋯，
+/* ---------------- 窄屏适配（手机 / 竖屏小窗 / 窄桌面窗口） ----------------
+   宽度 ≤900px 时：左侧栏变成抽屉，顶栏只留 ☰ / 搜索框 / ⋯，
    其余动作收进 ⋯ 面板；按钮、输入框、目录行按手指尺寸放大，
-   表格在自己框里横向滑，别把整页撑宽。 */
+   表格在自己框里横向滑，别把整页撑宽。
+   阈值 900 不是拍的：顶栏那一排按钮＋搜索框的最小内容宽约 870px，
+   窗口再窄一点，桌面版顶栏就放不下（以前 720 以下才切抽屉，
+   721～900 这段窗口会横向溢出）。 */
 
 /* 只在窄屏出现的两个顶栏按钮（DOM 一直在，宽屏用 CSS 藏起来） */
 .topbar-burger,
@@ -1349,7 +1367,7 @@ mark {
   display: none;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   :root {
     --topbar-h: 48px;
   }
@@ -1370,10 +1388,6 @@ mark {
   .topbar {
     gap: 6px;
     padding: 0 8px;
-  }
-
-  .brand-name {
-    display: none;
   }
 
   .topbar-burger,
@@ -1403,7 +1417,9 @@ mark {
   }
 
   .search-input {
-    flex: 1 1 auto;
+    /* flex-basis 取 0：不去贡献输入框的固有宽度（默认 20 字符 ≈ 200px），
+       否则顶栏的最小内容宽还是会把窄屏撑破 */
+    flex: 1 1 0;
     width: auto;
     min-width: 0;
     max-width: none;
@@ -1457,7 +1473,7 @@ mark {
 
   /* ---- 侧栏抽屉 ---- */
   .shell-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .sidebar {
@@ -1496,6 +1512,14 @@ mark {
   .page,
   .doc-view {
     padding: 12px 12px 40px;
+  }
+
+  .home-hero {
+    padding: 18px 16px;
+  }
+
+  .home-title {
+    font-size: 19px;
   }
 
   .doc-header {
@@ -2004,7 +2028,7 @@ mark {
 }
 
 /* 窄屏：只留头像与徽标，名字藏起来省地方 */
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .who-name {
     display: none;
   }

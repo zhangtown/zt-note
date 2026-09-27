@@ -7,7 +7,7 @@ import type { JSONContent } from '@tiptap/core'
 import { ImageWithLayout } from './image-ext'
 import { tableExtensions } from './table-ext'
 import type { Block, SaveBlock } from './types'
-import { apiUpload } from './api'
+import { pinAssetTokens, apiUpload } from './api'
 import { isDirty, planSave, sanitizeBlocks, stableStringify } from './docjson'
 import { h, showModal, toast, type ModalButton } from './dom'
 
@@ -513,6 +513,10 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
   editor.on('transaction', refresh)
   editor.on('selectionUpdate', refresh)
   refresh()
+
+  // 图片地址补上会话令牌（Cookie 被飞牛 App 的 WebView 拦掉时，粘贴进来的图也能立刻显示）；
+  // 只改 DOM，不改文档内容，存盘时 api.saveDoc 还会再清一道。
+  pinAssetTokens(editorHost, true)
 
   return {
     element,

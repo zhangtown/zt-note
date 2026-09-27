@@ -10,6 +10,7 @@ import Link from '@tiptap/extension-link'
 import { ImageWithLayout } from '../src/image-ext'
 import { tableExtensions } from '../src/table-ext'
 import { isDirty, planSave, sanitizeBlocks, stableStringify } from '../src/docjson'
+import { api, clearToken, readToken, saveToken, tokenValue, withToken } from '../src/api'
 import {
   DEFAULT_AUTOLOCK_MINUTES,
   autoLockLabel,
@@ -284,12 +285,15 @@ ok(imgPlan2[0].changed === false, '同一文档里的其它块不受影响')
 
 // ------------------------------------------------------------------ 闲置自动锁定
 
-/** 假的 localStorage（只需要 getItem/setItem） */
-function fakeStore(init: Record<string, string> = {}): Pick<Storage, 'getItem' | 'setItem'> {
+/** 假的 localStorage（只需要 getItem/setItem/removeItem） */
+function fakeStore(
+  init: Record<string, string> = {},
+): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
   const m = new Map(Object.entries(init))
   return {
     getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
     setItem: (k: string, v: string) => void m.set(k, v),
+    removeItem: (k: string) => void m.delete(k),
   }
 }
 
@@ -321,6 +325,85 @@ ok(shouldAutoLock(t0, t0 + 30 * 60_000, 30) === true, '正好 30 分钟算闲置
 ok(shouldAutoLock(t0, t0 + 15 * 60_000, 15) === true, '15 分钟档到点就锁')
 ok(shouldAutoLock(t0, t0 + 99 * 3_600_000, 0) === false, '设为永不时多久都不锁')
 ok(shouldAutoLock(Number.NaN, t0, 30) === false, '上次活动时间无效时不锁')
+
+// ------------------------------------------------------------------ 会话令牌的多通道
+//
+// 场景：飞牛 App 把应用嵌在 WebView 里，Cookie 可能被当第三方拦掉或存不下。
+// 这种时候令牌必须能从请求头（X-Zt-Token）与只读 URL 参数（?t=）走，
+// 否则表现就是「PIN 明明输对了，却一直让重输」。
+
+const apiStore = fakeStore()
+const g = globalThis as unknown as { window?: unknown; fetch?: unknown }
+g.window = { localStorage: apiStore }
+
+clearToken()
+saveToken('1000', 'tok-a')
+ok(tokenValue() === 'tok-a', '保存令牌后能读回')
+ok(readToken()?.uid === '1000', '同时记住是谁的令牌')
+ok(apiStore.getItem('ztnote.token')?.includes('tok-a') === true, '令牌落到 localStorage（刷新后还能用）')
+ok(
+  withToken('api/export/md?box=abc') === 'api/export/md?box=abc&t=tok-a',
+  '带查询串的地址用 & 续接令牌',
+  withToken('api/export/md?box=abc'),
+)
+ok(withToken('assets/x.png') === 'assets/x.png?t=tok-a', '没有查询串时用 ? 接令牌')
+ok(withToken(withToken('assets/x.png')) === 'assets/x.png?t=tok-a', '重复挂令牌不会叠出两个 t')
+
+// 改 PIN / 撤销时只拿到新令牌、拿不到 uid：沿用先前那一个，不然诊断信息会丢
+saveToken('', 'tok-b')
+ok(tokenValue() === 'tok-b' && readToken()?.uid === '1000', '只给令牌时沿用已记住的 uid')
+saveToken('1000', '')
+ok(tokenValue() === 'tok-b', '空令牌不覆盖已有令牌')
+
+// 请求头通道：所有 fetch 都要带上（Cookie 被拦时全靠它）
+const seen: { url: string; init: RequestInit }[] = []
+g.fetch = (url: unknown, init: unknown) => {
+  seen.push({ url: String(url), init: (init ?? {}) as RequestInit })
+  return Promise.resolve(
+    new Response(JSON.stringify({ ok: true, notebooks: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+}
+
+void api.tree()
+ok(
+  (seen[0]?.init.headers as Record<string, string> | undefined)?.['X-Zt-Token'] === 'tok-b',
+  'apiGet 带上 X-Zt-Token',
+  JSON.stringify(seen[0]?.init.headers),
+)
+
+// 存盘时清掉正文里的令牌：图片 src 渲染时会临时挂 ?t=，不能写进笔记
+void api.saveDoc('box', 'doc', [
+  { id: 'b1', type: 'paragraph', pm: { type: 'image', attrs: { src: 'assets/x.png?t=tok-b' } } },
+  { id: 'b2', type: 'paragraph', pm: { type: 'link', text: 'https://example.com/?t=123&x=1' } },
+] as unknown as import('../src/types').SaveBlock[])
+const saveBody = String(seen[1]?.init.body ?? '')
+ok(!saveBody.includes('tok-b'), '存盘请求里没有会话令牌', saveBody)
+ok(saveBody.includes('assets/x.png'), '图片地址本身保留')
+ok(saveBody.includes('https://example.com/?t=123&x=1'), '外链里同名的 t 参数不动')
+
+// 没有令牌时不该带空头
+clearToken()
+ok(withToken('assets/x.png') === 'assets/x.png', '没有令牌时地址原样返回')
+void api.tree()
+const lastHdr = seen[seen.length - 1]?.init.headers as Record<string, string> | undefined
+ok(lastHdr?.['X-Zt-Token'] === undefined, '没有令牌时不发 X-Zt-Token')
+
+// localStorage 彻底不可用（隐私模式 / WebView 配额）：内存里那份仍要让本页可用
+const blocked = {
+  getItem: () => null,
+  setItem: () => {
+    throw new Error('QuotaExceededError')
+  },
+}
+g.window = { localStorage: blocked }
+clearToken()
+saveToken('1000', 'tok-c')
+ok(tokenValue() === 'tok-c', 'localStorage 存不下时仍留在内存里（本页继续可用）')
+clearToken()
+ok(tokenValue() === '', '清理后内存与 localStorage 都不留令牌')
 
 console.log(`\n逻辑自测结果：${passed} 项通过，${failed} 项失败`)
 process.exit(failed ? 1 : 0)

@@ -1,8 +1,11 @@
 // 入口：装配应用。所有请求都用相对路径，因而可挂在任意前缀（如 /app/zt-note/）下。
 import './styles.css'
 import { bootstrap } from './app'
+import { applyFavicon } from './logo'
 
 function start(): void {
+  // 标签页图标就是云记笔记标识（与页面内的 logo 同源）
+  applyFavicon()
   try {
     bootstrap()
   } catch (err) {

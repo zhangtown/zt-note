@@ -39,6 +39,14 @@ export interface SessionResp {
   sessions?: number
   /** 本次解锁的到期时间（RFC3339，UTC） */
   sessionExpiresAt?: string
+  /**
+   * 未解锁的原因（后端在 locked 时给出）：
+   * no_token / token_invalid / identity_changed。
+   * 光看 locked 会让人以为 PIN 错了，反复输同一串数字。
+   */
+  reason?: string
+  /** reason=identity_changed 时，凭证原本属于哪个网关账号 */
+  tokenUid?: string
 }
 
 export interface Stats {
@@ -54,6 +62,8 @@ export interface PinResp {
   user: UserInfo
   onboarded?: boolean
   weak?: boolean
+  /** 会话令牌：Cookie 存不住的客户端（飞牛 App 的 WebView）用请求头带回来 */
+  token?: string
   locked?: boolean
   /** 撤销其它设备时被作废的会话数（不含本机） */
   revoked?: number

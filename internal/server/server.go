@@ -128,6 +128,13 @@ func identity(r *http.Request) users.Identity {
 	return users.Parse("", "", "")
 }
 
+// unlocked 判断本次请求是否已解锁。
+// 令牌可以从 Cookie、Authorization 头、X-Zt-Token 头或（只读请求）URL 参数来：
+// 飞牛 App 的 WebView 会把 Cookie 当第三方拦掉，只靠 Cookie 会「PIN 输对了进不去」。
+func (s *Server) unlocked(r *http.Request, id users.Identity) bool {
+	return s.Sessions.LookupAny(sessionTokens(r), id.UID)
+}
+
 // guard 实施 PIN 门：没解锁的请求拿不到任何笔记数据。
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +143,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			return
 		}
 		id := identity(r)
-		if !s.Sessions.Lookup(sessionToken(r), id.UID) {
+		if !s.unlocked(r, id) {
 			fail(w, http.StatusUnauthorized, "locked")
 			return
 		}
@@ -225,7 +232,7 @@ func userJSON(id users.Identity) map[string]any {
 // handleHealth 是健康检查（不涉及笔记数据，允许未解锁访问）。
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	id := identity(r)
-	locked := !s.Sessions.Lookup(sessionToken(r), id.UID)
+	locked := !s.unlocked(r, id)
 	rec := map[string]any{
 		"version":  s.Version,
 		"dataRoot": s.Users.Base,
@@ -248,7 +255,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // handleSession 返回当前身份与 PIN 状态，前端据此决定先显示哪一屏。
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	id := identity(r)
-	locked := !s.Sessions.Lookup(sessionToken(r), id.UID)
+	tokens := sessionTokens(r)
+	locked := !s.Sessions.LookupAny(tokens, id.UID)
 	rec := map[string]any{
 		"version":    s.Version,
 		"prefix":     s.Prefix,
@@ -257,9 +265,21 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"locked":     locked,
 		"hasLibrary": s.Users.HasWorkspace(id.UID),
 	}
+	if locked {
+		// 诊断：带着一枚有效令牌、但令牌不是当前网关身份的 → 身份在两次请求之间变了。
+		// 光看「locked」用户只会以为 PIN 错了，会把同一串数字反复输下去。
+		if uid := s.Sessions.OwnerOf(tokens, id.UID); uid != "" {
+			rec["reason"] = "identity_changed"
+			rec["tokenUid"] = uid
+		} else if len(tokens) > 0 {
+			rec["reason"] = "token_invalid"
+		} else {
+			rec["reason"] = "no_token"
+		}
+	}
 	if !locked {
 		rec["sessions"] = s.Sessions.CountFor(id.UID)
-		if exp, ok := s.Sessions.Expires(sessionToken(r), id.UID); ok {
+		if exp, ok := s.Sessions.ExpiresAny(tokens, id.UID); ok {
 			rec["sessionExpiresAt"] = exp.UTC().Format(time.RFC3339)
 		}
 		if st, err := s.openStore(id.UID); err == nil {

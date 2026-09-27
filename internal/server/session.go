@@ -34,6 +34,18 @@ const (
 	maxAttempts = 5 // 每输错这么多次，锁定时长上升一级
 )
 
+// Cookie 之外的令牌通道。
+//
+// 为什么不能只靠 Cookie：飞牛 App 把应用嵌在 WebView 里，跨源 iframe 里这些
+// Cookie 会被当成第三方 Cookie 拦掉（存不下、不回传），用户看到的就是
+// 「PIN 输对了却一直要求重输」。前端于是把令牌存在自己手里，每次请求带一个头；
+// 静态资源（<img src>）与导出下载没法加请求头，所以只读请求也认 URL 参数。
+const (
+	tokenHeader     = "X-Zt-Token"
+	tokenParam      = "token"
+	tokenParamShort = "t" // 资源地址里用短名，少占字节
+)
+
 // 错误
 var (
 	ErrNoPIN  = errors.New("尚未设置 PIN")
@@ -367,6 +379,60 @@ func (m *SessionManager) Drop(token string) {
 	delete(m.sessions, token)
 }
 
+// DropAny 注销本次请求携带的全部令牌（上锁时：Cookie 与前端自存的那枚一起作废）。
+func (m *SessionManager) DropAny(tokens []string) {
+	for _, t := range tokens {
+		m.Drop(t)
+	}
+}
+
+// LookupAny 依次尝试多枚令牌，任意一枚有效即算已解锁。
+// 前端可能同时带着 Cookie 和自己存的那枚，其中任意一枚有效都行。
+func (m *SessionManager) LookupAny(tokens []string, uid string) bool {
+	for _, t := range tokens {
+		if m.Lookup(t, uid) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExpiresAny 取第一枚有效令牌的到期时间。
+func (m *SessionManager) ExpiresAny(tokens []string, uid string) (time.Time, bool) {
+	for _, t := range tokens {
+		if exp, ok := m.Expires(t, uid); ok {
+			return exp, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// Owner 查某枚令牌属于谁（有效且未过期）。
+func (m *SessionManager) Owner(token string) (string, bool) {
+	if token == "" {
+		return "", false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[token]
+	if s == nil || m.now().After(s.expires) {
+		return "", false
+	}
+	return s.uid, true
+}
+
+// OwnerOf 返回本次请求携带的令牌里，「有效但不属于当前身份」的那枚属于谁。
+// 纯诊断用：网关给的身份在两次请求之间变了时，令牌没错、身份对不上，
+// 界面要说清原因（而不是让人反复重输 PIN）。
+func (m *SessionManager) OwnerOf(tokens []string, exceptUID string) string {
+	for _, t := range tokens {
+		if uid, ok := m.Owner(t); ok && uid != exceptUID {
+			return uid
+		}
+	}
+	return ""
+}
+
 // DropUser 注销某用户的全部会话（改 PIN / 撤销其它设备时用），返回注销掉的数量。
 func (m *SessionManager) DropUser(uid string) int {
 	m.mu.Lock()
@@ -449,10 +515,44 @@ func cookiePath(prefix string) string {
 	return prefix + "/"
 }
 
+// sessionTokens 汇总本次请求可能携带的令牌，按可信度排序（去重）。
+// 顺序：Authorization 头 → X-Zt-Token → URL 查询参数（仅只读）→ Cookie。
+// 前端可能同时带多枚（例如刚解锁时 Cookie 与自己存的那枚都有），逐个试。
+func sessionTokens(r *http.Request) []string {
+	out := make([]string, 0, 4)
+	seen := make(map[string]bool, 4)
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	if h := strings.TrimSpace(r.Header.Get("Authorization")); h != "" {
+		if v, ok := strings.CutPrefix(h, "Bearer "); ok {
+			add(v)
+		} else if v, ok := strings.CutPrefix(h, "bearer "); ok {
+			add(v)
+		}
+	}
+	add(r.Header.Get(tokenHeader))
+	// URL 里的令牌会进网关访问日志、浏览器历史，所以只让它在只读请求上生效：
+	// 否则别人发来一个链接就能借你的令牌改数据。
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		add(r.URL.Query().Get(tokenParam))
+		add(r.URL.Query().Get(tokenParamShort))
+	}
+	if c, err := r.Cookie(cookieName); err == nil {
+		add(c.Value)
+	}
+	return out
+}
+
 func sessionToken(r *http.Request) string {
-	c, err := r.Cookie(cookieName)
-	if err != nil {
+	tokens := sessionTokens(r)
+	if len(tokens) == 0 {
 		return ""
 	}
-	return c.Value
+	return tokens[0]
 }

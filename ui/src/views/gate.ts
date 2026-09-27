@@ -1,11 +1,31 @@
 // PIN 门：应用启动时先看会话状态，没设 PIN 就引导设置，设了就要求解锁。
 //
 // 这一屏刻意不请求任何笔记数据：未解锁时后端也不会下发标题、搜索和图片。
-import { api, setGateBusy } from '../api'
+import { api, clearToken, probeSession, saveToken, setGateBusy } from '../api'
 import { h, showModal, toast } from '../dom'
+import { logoMark } from '../logo'
 import type { PinResp, SessionResp } from '../types'
 
 const PIN_LEN = 6
+
+/**
+ * 解锁成功、但会话没立住时，把后端给的原因翻成人话。
+ * 这一段专门对付「PIN 输对了却一直让重输」：用户反复输同一串数字，只因
+ * 为页面没告诉他凭证没留住。
+ */
+function sessionHint(probe: SessionResp | null): string {
+  if (!probe) return 'PIN 是对的，但校验会话时连不上后端，请稍后重试。'
+  switch (probe.reason) {
+    case 'identity_changed':
+      return `PIN 是对的。但这个页面带的登录凭证属于另一个账号（凭证 uid ${probe.tokenUid}，当前 uid ${probe.user.uid}）。请从桌面重新打开应用；若仍如此，请把这个提示截图反馈。`
+    case 'token_invalid':
+      return 'PIN 是对的，但这枚登录凭证已失效（改过 PIN 或在别处撤销过）。请再输一次 PIN。'
+    case 'no_token':
+      return 'PIN 已经通过，但浏览器没能把登录凭证留下来（飞牛 App 的 WebView 常会把 Cookie 拦掉）。已改用请求头携带，请再输一次 PIN。'
+    default:
+      return 'PIN 已通过，但会话仍未生效。请再输一次；若反复出现，请把这个页面截图反馈。'
+  }
+}
 
 /* ---------------- 6 位 PIN 输入框 ---------------- */
 
@@ -98,7 +118,7 @@ export function createGate(opts: GateOptions): HTMLElement {
   const brand = h(
     'div',
     { class: 'gate-brand' },
-    h('span', { class: 'brand-mark' }, 'Zt'),
+    logoMark(28),
     h(
       'div',
       {},
@@ -126,6 +146,11 @@ export function createGate(opts: GateOptions): HTMLElement {
   if (setup && !session.hasLibrary) {
     lead.textContent += '（第一次进入会给你建一个空白笔记本和一篇使用说明）'
   }
+  // 打开这一页时就已经锁着、而且原因是「凭证属于别的账号」：先说清楚，
+  // 否则用户会以为是自己 PIN 输错了。
+  if (session.locked && session.reason === 'identity_changed' && session.tokenUid) {
+    lead.textContent = `这个页面带的登录凭证属于另一个账号（凭证 uid ${session.tokenUid}，当前 uid ${session.user.uid}）。请确认输入的是当前账号的 PIN。`
+  }
 
   const buttons: HTMLButtonElement[] = []
   const setBusy = (busy: boolean): void => {
@@ -146,11 +171,32 @@ export function createGate(opts: GateOptions): HTMLElement {
 
   const card = h('div', { class: 'gate-card' }, brand, who, lead)
 
+  /**
+   * 解锁成功的收尾：存令牌 → 当场验证会话是否真的立住 → 才进主界面。
+   *
+   * 这一拍验证是关键：飞牛 App 的 WebView 里 Cookie 可能丢，丢了的后果就是
+   * 又回到 PIN 屏——用户只会看到「输对了还是让重输」。验证一次就能给出原因。
+   */
+  const enter = async (resp: PinResp): Promise<void> => {
+    if (resp.token) saveToken(session.user.uid, resp.token)
+    const probe = await probeSession()
+    if (probe && !probe.locked) {
+      setGateBusy(true)
+      opts.onUnlocked(resp)
+      return
+    }
+    // 没立住：把外来的旧凭证清掉（下次输 PIN 就会换来属于当前账号的新凭证）
+    if (probe?.reason === 'identity_changed') clearToken()
+    setBusy(false)
+    setGateBusy(false)
+    showError(sessionHint(probe))
+  }
+
   const finish = (resp: PinResp): void => {
     setBusy(false)
     if (resp.weak) toast('这个 PIN 太好猜了（比如 123456），建议解锁后改一个', 'error', 6000)
     setGateBusy(true)
-    opts.onUnlocked(resp)
+    void enter(resp)
   }
 
   const fail = (err: unknown): void => {
@@ -312,6 +358,8 @@ export async function openPinChangeDialog(): Promise<boolean> {
   if (res !== 'ok') return false
   try {
     const resp = await api.pinChange(oldField.value(), newField.value())
+    // 改了 PIN 会换一枚新令牌：存下来，否则本机下次请求就被当成没解锁
+    if (resp.token) saveToken('', resp.token)
     if (resp.weak) toast('PIN 已更新，但这个 PIN 太好猜了，建议再改一个', 'error', 6000)
     else toast('PIN 已更新', 'ok')
     return true

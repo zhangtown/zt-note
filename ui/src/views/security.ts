@@ -1,5 +1,5 @@
 // PIN 与安全：一屏管完 PIN、闲置自动锁定、其它设备上的解锁，以及「忘记 PIN 怎么重置」。
-import { api } from '../api'
+import { api, saveToken } from '../api'
 import { confirmDialog, h, showModal, toast } from '../dom'
 import {
   AUTOLOCK_CHOICES,
@@ -203,6 +203,8 @@ export async function openSecurityDialog(ctx: SecurityCtx): Promise<void> {
     if (!yes) return
     try {
       const resp = await api.pinRevoke()
+      // 撤销会换一枚新令牌：旧的那枚已经失效，不存下来本机下次请求就成未解锁
+      if (resp.token) saveToken(session.user.uid, resp.token)
       const revoked = resp.revoked ?? 0
       await refresh()
       toast(

@@ -1450,6 +1450,19 @@ async function main() {
     version: (document.querySelector('.version') && document.querySelector('.version').textContent || '').trim(),
     treeError: (document.querySelector('.tree .error-msg') && document.querySelector('.tree .error-msg').textContent || '').trim(),
     homeText: (document.querySelector('.main') && document.querySelector('.main').innerText || '').slice(0, 120),
+    homeBrand: (function () {
+      const b = document.querySelector('.main .home-brand')
+      return b ? { svg: !!b.querySelector('svg'), text: b.textContent.replace(/\s+/g, ' ').trim() } : null
+    })(),
+    sidebarBrand: (function () {
+      const b = document.querySelector('.sidebar-brand')
+      return b ? { svg: !!b.querySelector('svg'), text: b.textContent.replace(/\s+/g, ' ').trim() } : null
+    })(),
+    sidebarBrandFirst: (function () {
+      const s = document.querySelector('.sidebar')
+      return !!(s && s.firstElementChild && s.firstElementChild.classList.contains('sidebar-brand'))
+    })(),
+    topbarText: (document.querySelector('.topbar') && document.querySelector('.topbar').innerText || '').replace(/\s+/g, ' ').trim(),
   }))()`)
   ctx.title = pageInfo.title
   ctx.notebooks = pageInfo.notebooks
@@ -1457,8 +1470,10 @@ async function main() {
   ctx.hasTargetDoc = pageInfo.docs.includes(DOC_TITLE)
   ctx.version = pageInfo.version
 
-  check('3-页面', `document.title = ${JSON.stringify(pageInfo.title)}（含 zt-note）`, /zt-note/.test(pageInfo.title ?? ''), pageInfo.title)
+  check('3-页面', `document.title = ${JSON.stringify(pageInfo.title)}（含 云记笔记）`, /云记笔记/.test(pageInfo.title ?? ''), pageInfo.title)
   check('3-页面', '.shell / .topbar / .sidebar / .main 布局齐全', pageInfo.hasShell && pageInfo.hasTopbar && pageInfo.hasSidebar && pageInfo.hasMain, JSON.stringify({ shell: pageInfo.hasShell, topbar: pageInfo.hasTopbar, sidebar: pageInfo.hasSidebar, main: pageInfo.hasMain }))
+  check('3-品牌', `首页顶部是云记笔记标识（内联 SVG + 名字）：${JSON.stringify(pageInfo.homeBrand)}`, !!(pageInfo.homeBrand && pageInfo.homeBrand.svg) && /云记笔记/.test(pageInfo.homeBrand?.text ?? ''), JSON.stringify(pageInfo.homeBrand))
+  check('3-品牌', '回首页入口在侧栏顶部品牌行（不在顶栏）', pageInfo.sidebarBrandFirst && !!(pageInfo.sidebarBrand && pageInfo.sidebarBrand.svg) && /云记笔记/.test(pageInfo.sidebarBrand?.text ?? '') && !/zt-note|云记笔记/.test(pageInfo.topbarText ?? ''), JSON.stringify({ sidebarBrand: pageInfo.sidebarBrand, sidebarBrandFirst: pageInfo.sidebarBrandFirst, topbarText: pageInfo.topbarText }))
   check('3-页面', '顶栏版本号来自真实后端 health（不是「连接中…」）', /^v/.test(pageInfo.version ?? ''), `version 区文案=${JSON.stringify(pageInfo.version)}`)
   check('3-树', `文档树渲染 ${EXPECT_BOXES} 个笔记本且含 笔记本A / 示例笔记本 / ${WELCOME_BOX}`, pageInfo.notebooks.length === EXPECT_BOXES && pageInfo.notebooks.includes('笔记本A') && pageInfo.notebooks.includes('示例笔记本') && pageInfo.notebooks.includes(WELCOME_BOX), JSON.stringify(pageInfo.notebooks))
   check('3-树', `笔记本展开后渲染 ${EXPECT_DOCS} 个文档条目且含《${DOC_TITLE}》（含首次进入的欢迎文档）`, pageInfo.docs.length === EXPECT_DOCS && pageInfo.docs.includes(DOC_TITLE), `${pageInfo.docs.length} 条：${pageInfo.docs.slice(0, 14).join('、')}`)
@@ -1944,6 +1959,7 @@ async function main() {
   if (editOk) {
     const imgDoc = { box: target.box, id: '' }
     let assetRef = ''
+    let assetClean = ''
     try {
       const created = await postJson(`${API}/doc/create`, { box: imgDoc.box, title: 'E2E 图片测试' })
       imgDoc.id = created.data?.id ?? ''
@@ -1984,7 +2000,11 @@ async function main() {
         }
       })()`)
       assetRef = String(imgInfo?.src || '')
-      check('11-图片', `编辑器内图片 src 指向 assets/（${assetRef}）`, /^assets\/e2e-paste-\d{14}-[a-z0-9]{7}\.png$/.test(assetRef), JSON.stringify(imgInfo))
+      // 图片 src 现在会挂只读会话令牌（?t=…，Cookie 被 WebView 拦掉时的通道）。
+      // 落盘/比对/清理一律用去掉查询串的干净路径，否则会把令牌当成文件名。
+      assetClean = assetRef.split('?')[0]
+      check('11-图片', `编辑器内图片 src 指向 assets/（${assetRef}）`, /^assets\/e2e-paste-\d{14}-[a-z0-9]{7}\.png(\?t=[0-9a-f]{64})?$/.test(assetRef), JSON.stringify(imgInfo))
+      check('11-图片', '图片 src 不带密钥以外的参数（只允许 ?t= 会话令牌）', !/\?/.test(assetRef) || /\?t=[0-9a-f]{64}$/.test(assetRef), assetRef)
       check('11-图片', '图片 alt = 原文件名（去扩展名）', imgInfo?.alt === 'e2e-paste', JSON.stringify(imgInfo))
       check('11-图片', '编辑器内图片带 zt-image 类名（编辑器样式）', String(imgInfo?.cls || '').includes('zt-image'), JSON.stringify(imgInfo))
       // 进度提示是过渡态：插完 1.4s 后自己退场
@@ -2002,15 +2022,16 @@ async function main() {
       await sleep(400)
 
       const sy = readSy(imgDoc.box, imgDoc.id)
-      const name = assetRef.split('/').pop()
+      const name = assetClean.split('/').pop()
       const assetPath = join(USER_WS, 'data', 'assets', name)
       const imgNode = (sy.json.Children ?? []).flatMap((c) => c.Children ?? []).find((n) => n.Type === 'NodeImage')
       const dest = (imgNode?.Children ?? []).find((n) => n.Type === 'NodeLinkDest')?.Data
-      check('11-图片', '.sy 里写入 NodeImage，src 指向上传资源', Boolean(dest) && dest === assetRef, JSON.stringify({ dest, assetRef }))
+      check('11-图片', '.sy 里写入 NodeImage，src 指向上传资源', Boolean(dest) && dest === assetClean, JSON.stringify({ dest, assetClean }))
+      check('11-图片', '.sy 里不写会话令牌（只存干净路径，换令牌后旧文档不坏）', Boolean(dest) && !/[?&]t=/.test(dest), String(dest))
       check('11-图片', '资源文件已落盘到 data/assets/', existsSync(assetPath), assetPath.replace(ROOT, ''))
       const readHtml = await cdp.evalJs(`document.querySelector('.doc-html')?.innerHTML ?? ''`)
-      check('11-图片', '阅读视图渲染 <img src="assets/…">（经 /assets/ 路由可取到）', new RegExp(`<img[^>]+src="${assetRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(readHtml), readHtml.slice(0, 200))
-      const served = await httpJson(`${BASE}${PREFIX}/${assetRef}`, {})
+      check('11-图片', '阅读视图渲染 <img src="assets/…">（经 /assets/ 路由可取到）', new RegExp(`<img[^>]+src="${assetClean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(readHtml), readHtml.slice(0, 200))
+      const served = await httpJson(`${BASE}${PREFIX}/${assetClean}`, {})
       check('11-图片', '图片 URL 能直接取到（HTTP 200）', served.status === 200, `status=${served.status}`)
 
       ctx.image = { doc: imgDoc.id, ref: assetRef, alt: imgInfo?.alt, uploadReqs: uploadReqs.length, syHasNodeImage: Boolean(dest), assetOnDisk: existsSync(assetPath), served: served.status }
@@ -2031,7 +2052,7 @@ async function main() {
       if (imgDoc.id) {
         try {
           await postJson(`${API}/doc/delete`, { box: imgDoc.box, id: imgDoc.id })
-          if (assetRef) rmSync(join(USER_WS, 'data', 'assets', assetRef.split('/').pop()), { force: true })
+          if (assetClean) rmSync(join(USER_WS, 'data', 'assets', assetClean.split('/').pop()), { force: true })
         } catch {
           /* 清理失败不影响结论 */
         }

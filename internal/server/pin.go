@@ -43,10 +43,11 @@ func (s *Server) handlePinSetup(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	onboarded := s.grant(w, r, id)
+	token, onboarded := s.grant(w, r, id)
 	ok(w, map[string]any{
 		"weak":      WeakPIN(body.PIN),
 		"onboarded": onboarded,
+		"token":     token,
 		"user":      userJSON(id),
 	})
 }
@@ -80,13 +81,13 @@ func (s *Server) handlePinUnlock(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, fmt.Sprintf("PIN 不对，还能试 %d 次", res.Remaining))
 		return
 	}
-	onboarded := s.grant(w, r, id)
-	ok(w, map[string]any{"onboarded": onboarded, "user": userJSON(id)})
+	token, onboarded := s.grant(w, r, id)
+	ok(w, map[string]any{"onboarded": onboarded, "token": token, "user": userJSON(id)})
 }
 
-// handlePinLock 锁定：丢掉当前会话。
+// handlePinLock 锁定：丢掉当前会话（Cookie 与前端自存的令牌都作废）。
 func (s *Server) handlePinLock(w http.ResponseWriter, r *http.Request) {
-	s.Sessions.Drop(sessionToken(r))
+	s.Sessions.DropAny(sessionTokens(r))
 	http.SetCookie(w, sessionCookie(r, cookiePath(s.Prefix), "", -1))
 	ok(w, map[string]any{"locked": true})
 }
@@ -98,7 +99,7 @@ func (s *Server) handlePinChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := identity(r)
-	if !s.Sessions.Lookup(sessionToken(r), id.UID) {
+	if !s.unlocked(r, id) {
 		fail(w, http.StatusUnauthorized, "locked")
 		return
 	}
@@ -119,8 +120,8 @@ func (s *Server) handlePinChange(w http.ResponseWriter, r *http.Request) {
 	}
 	// 其它设备上的会话作废，当前设备换一枚新会话继续用。
 	s.Sessions.DropUser(id.UID)
-	onboarded := s.grant(w, r, id)
-	ok(w, map[string]any{"weak": WeakPIN(body.New), "onboarded": onboarded, "user": userJSON(id)})
+	token, onboarded := s.grant(w, r, id)
+	ok(w, map[string]any{"weak": WeakPIN(body.New), "onboarded": onboarded, "token": token, "user": userJSON(id)})
 }
 
 // handlePinRevoke 撤销其它设备上的解锁（当前设备换一枚新会话继续用）。
@@ -132,39 +133,41 @@ func (s *Server) handlePinRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := identity(r)
-	if !s.Sessions.Lookup(sessionToken(r), id.UID) {
+	if !s.unlocked(r, id) {
 		fail(w, http.StatusUnauthorized, "locked")
 		return
 	}
 	dropped := s.Sessions.DropUser(id.UID)
-	onboarded := s.grant(w, r, id)
+	token, onboarded := s.grant(w, r, id)
 	// dropped 里含发出请求的这枚令牌，所以「其它设备」= dropped-1
 	revoked := dropped - 1
 	if revoked < 0 {
 		revoked = 0
 	}
-	ok(w, map[string]any{"revoked": revoked, "sessions": 1, "onboarded": onboarded, "user": userJSON(id)})
+	ok(w, map[string]any{"revoked": revoked, "sessions": 1, "onboarded": onboarded, "token": token, "user": userJSON(id)})
 }
 
-// grant 给当前身份发一枚会话 Cookie，并处理「第一次进入」的建库。
+// grant 给当前身份发一枚会话令牌（Cookie + 响应体各带一次），并处理「第一次进入」的建库。
+// 响应体里的 token 是给「Cookie 存不住」的客户端用的（手机 App 的 WebView）：
+// 前端存下来、每次请求用 Authorization 头带回来。
 // 建库失败只记日志（前端随后调用数据接口时会看到具体错误）。
-func (s *Server) grant(w http.ResponseWriter, r *http.Request, id users.Identity) bool {
+func (s *Server) grant(w http.ResponseWriter, r *http.Request, id users.Identity) (string, bool) {
 	token := s.Sessions.Create(id.UID)
 	if token == "" {
 		s.Log.Printf("创建会话失败 (%s)", id.UID)
-		return false
+		return "", false
 	}
 	http.SetCookie(w, sessionCookie(r, cookiePath(s.Prefix), token, int(sessionTTL/time.Second)))
 	st, err := s.openStore(id.UID)
 	if err != nil {
 		s.Log.Printf("打开工作区失败 (%s): %v", id.UID, err)
-		return false
+		return token, false
 	}
 	onboarded, err := s.ensureOnboarded(id.UID, st)
 	if err != nil {
 		s.Log.Printf("首次建库失败 (%s): %v", id.UID, err)
 	}
-	return onboarded
+	return token, onboarded
 }
 
 // lockMessage 把剩余锁定时长说成人话。

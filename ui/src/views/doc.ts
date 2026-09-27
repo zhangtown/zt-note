@@ -1,5 +1,5 @@
 // 文档视图：阅读模式（后端渲染的 html）/ 编辑模式（TipTap）
-import { api } from '../api'
+import { api, pinAssetTokens } from '../api'
 import { createEditor, type EditorHandle } from '../editor'
 import type { DocResp } from '../types'
 import { notebookName } from '../store'
@@ -8,6 +8,8 @@ import { navigate, setGuard } from '../router'
 
 export interface ViewHandle {
   destroy: () => void
+  /** 可选：外部数据变了（如文档树重新加载）后让视图自己重新判断状态 */
+  refresh?: () => void
 }
 
 export interface DocParams {
@@ -159,6 +161,8 @@ export async function mountDoc(
     })
   } else {
     body.innerHTML = `<article class="prose doc-html">${decorate(doc.html ?? '')}</article>`
+    // 图片子资源请求带不了请求头：把会话令牌挂到地址上（Cookie 靠不住时的兼底）
+    pinAssetTokens(body)
     // 外链在应用内不该跳走：新标签页打开；图片加载失败给出可见提示
     body.addEventListener('click', (e) => {
       const anchor = (e.target as HTMLElement | null)?.closest?.('a')

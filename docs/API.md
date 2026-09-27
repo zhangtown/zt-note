@@ -79,15 +79,28 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `api/session` | `{version,prefix,user:{uid,name,isAdmin,local},needsSetup,locked,hasLibrary,stats?,sessions?,sessionExpiresAt?}`；前端据此决定先显示「设 PIN」屏、「解锁」屏还是主界面；解锁后额外给 `sessions`（该账号当前有效会话数，含本机）与 `sessionExpiresAt`（本机这枚令牌的到期时间，RFC3339/UTC） |
-| POST | `api/pin/setup` | `{pin:"6 位数字"}` → `{ok,onboarded,weak}`，同时下发会话 Cookie；仅在该用户从未设过 PIN 时可用 |
-| POST | `api/pin/unlock` | `{pin}` → `{ok,weak}`；错码 → 401，响应里带剩余次数 |
-| POST | `api/pin/lock` | `{}` → `{ok,locked:true}`（已解锁时用） |
-| POST | `api/pin/change` | `{old,new}` → `{ok,weak}`；`weak:true` 指新 PIN 命中弱口令表（仍可设置，前端只给提示）。改完该账号的**其它会话全部作废**，本机换一枚新令牌继续用 |
-| POST | `api/pin/revoke` | `{}` → `{ok,revoked:n,sessions:1}`；作废该账号其它设备上的解锁（`revoked` 不含本机），本机换新令牌。「手机丢了」用这个 |
+| GET | `api/session` | `{version,prefix,user:{uid,name,isAdmin,local},needsSetup,locked,hasLibrary,stats?,sessions?,sessionExpiresAt?}`；前端据此决定先显示「设 PIN」屏、「解锁」屏还是主界面；解锁后额外给 `sessions`（该账号当前有效会话数，含本机）与 `sessionExpiresAt`（本机这枚令牌的到期时间，RFC3339/UTC）。未解锁时额外给 `reason`（`no_token` / `token_invalid` / `identity_changed`）与 `tokenUid`（原因同上时的原 uid）——用来区分「密码输错了」和「凭证根本没留下来」 |
+| POST | `api/pin/setup` | `{pin:"6 位数字"}` → `{ok,onboarded,weak,token}`，同时下发会话 Cookie；仅在该用户从未设过 PIN 时可用 |
+| POST | `api/pin/unlock` | `{pin}` → `{ok,weak,token}`；错码 → 401，响应里带剩余次数 |
+| POST | `api/pin/lock` | `{}` → `{ok,locked:true}`（已解锁时用）；本机这枚令牌与 Cookie 同时作废 |
+| POST | `api/pin/change` | `{old,new}` → `{ok,weak,token}`；`weak:true` 指新 PIN 命中弱口令表（仍可设置，前端只给提示）。改完该账号的**其它会话全部作废**，本机换一枚新令牌继续用 |
+| POST | `api/pin/revoke` | `{}` → `{ok,revoked:n,sessions:1,token}`；作废该账号其它设备上的解锁（`revoked` 不含本机），本机换新令牌。「手机丢了」用这个 |
 
 会话：`ztnote_session` Cookie（HttpOnly、SameSite=Lax、Path=`<prefix>/`、30 天），值是服务端随机令牌，
 绑定 uid——同一个浏览器换了网关注入的 uid，令牌也不认。
+
+令牌共四个通道，服务端按顺序取第一个认得的（同一个令牌换个通道也一样认）：
+
+| 顺序 | 通道 | 用在哪 |
+|---|---|---|
+| 1 | `Authorization: Bearer <token>` | 非浏览器客户端（脚本、TV 端、自建客户端） |
+| 2 | `X-Zt-Token: <token>` | 前端所有 fetch/XHR。飞牛 App 的 WebView 会把 Cookie 当第三方拦掉，这是主通道 |
+| 3 | `?token=` / `?t=` | **只读请求**（GET/HEAD）：`<img src>`、导出下载这类发不了请求头的场景。写接口不认 URL 里的令牌 |
+| 4 | Cookie | 普通浏览器，令牌不落到 JS 能读的地方 |
+
+`pin/setup`、`pin/unlock`、`pin/change`、`pin/revoke` 的响应体里都会带一枚 `token`（与 Cookie 同值），
+给「Cookie 存不下」的客户端（飞牛 App 的 WebView）存到 `localStorage`，之后用 `X-Zt-Token` 带回来。
+只靠 Cookie 时，这类 WebView 的表现就是「PIN 输对了却一直让重输」：解锁成功但下一个请求又是未解锁。
 
 PIN 存储：`users/<uid>/pin.json`——PBKDF2-HMAC-SHA256（12 万次迭代）+ 每用户随机盐，只存 salt 与 hash；
 连续输错逐级锁定（第 5 次起 1 分钟、第 10 次起 5 分钟、第 15 次起 15 分钟，按 uid 计数）。PIN 是「防旁人随手翻看」的门，不是加密：磁盘上仍是明文 `.sy`

@@ -1,5 +1,5 @@
 // 应用装配：会话（PIN 门）→ 布局（顶部工具条 + 左侧文档树 + 主区域）、路由分发、全局动作
-import { api, exportUrl, setGateBusy, setUnauthorizedHandler, triggerDownload } from './api'
+import { api, clearToken, exportUrl, setGateBusy, setUnauthorizedHandler, triggerDownload } from './api'
 import { confirmDialog, h, promptDialog, toast } from './dom'
 import {
   currentRoute,
@@ -15,6 +15,7 @@ import { createAutoLock, readAutoLockMinutes } from './autolock'
 import { openSecurityDialog } from './views/security'
 import { createTreeView, type TreeHandle } from './views/tree'
 import { createTopbar, type TopbarHandle } from './views/topbar'
+import { logoMark } from './logo'
 import { mountDoc, type ViewHandle } from './views/doc'
 import { createGate } from './views/gate'
 import { mountHome } from './views/home'
@@ -50,6 +51,8 @@ async function openSession(app: HTMLElement): Promise<void> {
     if (session.needsSetup || session.locked) {
       gated = true
       setGateBusy(true)
+      // 页面带的是别的账号的旧凭证：清掉，省得每次请求都白带一枚废令牌
+      if (session.reason === 'identity_changed') clearToken()
       app.replaceChildren(
         createGate({
           session,
@@ -84,7 +87,7 @@ function bootError(err: unknown, retry: () => void): HTMLElement {
       h(
         'div',
         { class: 'gate-brand' },
-        h('span', { class: 'brand-mark' }, 'Zt'),
+        logoMark(28),
         h(
           'div',
           {},
@@ -116,6 +119,8 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
   const refreshTree = async (): Promise<void> => {
     await tree?.reload()
     topbar?.refresh()
+    // 树变了，首页的空态横幅之类要重新判断（否则"还没有笔记本"会挂在已经导入好的笔记本上）
+    current?.refresh?.()
   }
 
   /* ---- 闲置自动锁定：多久没动就回 PIN 屏（时长按设备存在 localStorage） ---- */
@@ -299,7 +304,6 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     onImport: () => navigate({ name: 'import' }),
     onExport: actionExport,
     onSearch: (q) => navigate({ name: 'search', q }),
-    onGoHome: () => navigate({ name: 'home' }),
     session,
     onLock: () => void lockNow(),
     onSecurity: () =>
@@ -319,16 +323,37 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     } catch {
       /* 已经失效也无所谓，下面照样回 PIN 屏 */
     }
+    // 上锁会把本机的令牌一起作废，本地那份也清掉，免得带着废令牌再请求
+    clearToken()
     store.selection = null
     await openSession(app)
   }
+
+  /* 侧栏顶部的品牌行：云记笔记标识 + 回首页。
+     顶栏不再放品牌（手机上它白占宽度），首页入口改到侧栏，
+     窄屏时它就在抽屉最上方。 */
+  const brandHome = h(
+    'button',
+    { class: 'sidebar-brand', type: 'button', title: '回到首页' },
+    logoMark(22),
+    h('span', {}, '云记笔记'),
+  )
+  brandHome.addEventListener('click', () => {
+    topbar.closePanels()
+    navigate({ name: 'home' })
+  })
 
   app.replaceChildren(
     h(
       'div',
       { class: 'shell' },
       topbar.element,
-      h('div', { class: 'shell-body' }, h('aside', { class: 'sidebar' }, tree.element), main),
+      h(
+        'div',
+        { class: 'shell-body' },
+        h('aside', { class: 'sidebar' }, brandHome, tree.element),
+        main,
+      ),
       // 窄屏抽屉/动作面板打开时的遮罩，点一下收起（宽屏下被 CSS 藏起来）
       h('div', {
         class: 'drawer-mask',

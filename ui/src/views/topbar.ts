@@ -12,7 +12,6 @@ export interface TopbarCtx {
   onImport: () => void
   onExport: (format: 'siyuan' | 'md', box: string) => void
   onSearch: (q: string) => void
-  onGoHome: () => void
   /** 当前身份（飞牛网关给的账号） */
   session: SessionResp
   /** 锁定：丢掉会话，回到 PIN 屏 */
@@ -45,7 +44,8 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
   btnImport.addEventListener('click', ctx.onImport)
 
   /* ---- 窄屏：抽屉（☰）与动作面板（⋯） ----
-     两个按钮只在 ≤720px 处可见（宽屏由 CSS 藏起来），
+     两个按钮只在 ≤900px 处可见（宽屏由 CSS 藏起来，断点定义在 styles.css 末尾一节）；
+     顶栏里不放品牌与 logo：回首页入口在侧栏顶部的「云记笔记」标识行（见 app.ts）。
      在这里也只是切 body 上的类，宽屏下没有副作用。 */
   const btnDrawer = h(
     'button',
@@ -239,21 +239,13 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
     searchInput.select()
   })
 
-  /* ---- 品牌 / 版本 ---- */
-  const brand = h(
-    'button',
-    { class: 'brand', type: 'button', title: '回到首页' },
-    h('span', { class: 'brand-mark' }, 'Zt'),
-    h('span', { class: 'brand-name' }, 'zt-note'),
-  )
-  brand.addEventListener('click', ctx.onGoHome)
-
+  /* ---- 版本 ---- */
   const version = h('span', { class: 'version badge', title: '后端状态' }, '连接中…')
 
   const element = h(
     'header',
     { class: 'topbar' },
-    h('div', { class: 'topbar-left' }, btnDrawer, brand),
+    h('div', { class: 'topbar-left' }, btnDrawer),
     h(
       'div',
       { class: 'topbar-actions' },

@@ -3,7 +3,9 @@
 // 检查页面能否装配（顶栏 / 文档树 / 首页），并确认没有前端异常、没有绝对路径 404。
 //
 // 用法：npm run build && npm run smoke
-// 说明：不启动任何后端服务，api/* 请求会 404 —— 页面应显示错误态而不是白屏。
+// 说明：不启动任何后端服务。只把 /api/session 用一份假会话应答，好让应用能装配出
+//       「顶栏 + 侧栏 + 主区域」（PIN 门之后的真实后端才会给会话）；其余 api/* 一律 404，
+//       页面应当落在错误态（文档树出错了 / 版本区显示后端错误）而不是白屏。
 //       因此这是一个「外壳与错误路径」测试，接口联调仍需真实后端。
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -55,6 +57,18 @@ if (!existsSync(join(dist, 'index.html'))) {
 
 /* ---------- 1. 静态服务器（模拟 fnOS 网关前缀） ---------- */
 
+// 假会话：够 mountApp 装配主界面即可（needsSetup/locked 都为 false，直接进主界面）
+const FAKE_SESSION = {
+  ok: true,
+  version: 'smoke-0.0.0',
+  prefix: PREFIX,
+  user: { uid: 'smoke', name: '冒烟用户', isAdmin: false, local: true },
+  needsSetup: false,
+  locked: false,
+  hasLibrary: true,
+  dataDir: '/data/smoke',
+}
+
 const served = []
 const notFound = []
 const server = createServer((req, res) => {
@@ -63,6 +77,12 @@ const server = createServer((req, res) => {
   if (path.startsWith(PREFIX)) path = path.slice(PREFIX.length - 1)
   else if (path.startsWith('/app/')) path = '/' // 前缀写错也应落到 index
   const rel = normalize(decodeURIComponent(path)).replace(/^([/\\])+/, '').split(sep).join('/')
+  if (rel === 'api/session') {
+    served.push('/api/session（假会话）')
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(FAKE_SESSION))
+    return
+  }
   let file = join(dist, rel)
   if (!file.startsWith(dist)) file = join(dist, 'index.html')
   if (!existsSync(file) || statSync(file).isDirectory()) {
