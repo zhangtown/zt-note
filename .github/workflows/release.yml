@@ -1,0 +1,154 @@
+name: Release
+
+# 打 tag 即发版：git tag v0.5.1 && git push --tags
+#   1) 跑一遍测试（Go vet/单测 + 前端类型检查/build/逻辑测试）
+#   2) bash build.sh all 产 fpk，并校验 manifest 里的 version 与 tag 一致
+#   3) 建/更新对应 Release，挂上 zt-note_<版本>.fpk（附大小与 SHA-256）
+#
+# 发布说明的正文 = docs/releases/<版本>.md（可选，手写亮点）+ 自动生成的
+# 「安装 / 校验和 / 本次包含的提交」三段。想手写就加一个同名文件。
+#
+# 也可以手动重跑已有版本的发布：Actions → Release → Run workflow → tag 填 v0.5.0
+# （会重新构建并把附件 --clobber 覆盖上去，正文一并刷新）
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（例如 v0.5.0；留空则用当前 ref）'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 测试 → 打包 → 发布
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要完整历史与本地 tag：列「本次包含的提交」、找上一个版本
+
+      - name: 解析版本号（tag 与 manifest 必须一致）
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -e
+          TAG="$INPUT_TAG"
+          [ -n "$TAG" ] || TAG="$GITHUB_REF_NAME"
+          case "$TAG" in v*) ;; *) echo "::error::tag 必须形如 v0.5.0，收到 $TAG"; exit 1 ;; esac
+          VERSION="${TAG#v}"
+          VER="$(sed -n 's/^version=//p' deploy/fnos-app/zt-note/manifest | head -n1)"
+          echo "tag $TAG / manifest version=$VER"
+          if [ "$VERSION" != "$VER" ]; then
+            echo "::error::manifest 里的 version=$VER 与 tag $TAG 不一致 —— 先把 deploy/fnos-app/zt-note/manifest 的 version 改成 $VERSION 再打 tag"
+            exit 1
+          fi
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::本地没有 tag $TAG"; exit 1; }
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # 发版前把 CI 里那套测试再跑一遍：进 Release 的包必须是自己验证过的那个
+      - run: go vet ./...
+      - run: go test ./... -count=1
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: npm run test:logic
+        working-directory: ui
+
+      - name: 下载 fnpack（Linux）
+        run: |
+          mkdir -p .toolchain/fnpack
+          curl -fsSL -o .toolchain/fnpack/fnpack \
+            https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64
+          chmod +x .toolchain/fnpack/fnpack
+          .toolchain/fnpack/fnpack --version || true
+
+      - name: 打包 fpk
+        run: |
+          bash build.sh all
+          test -s deploy/fnos-app/zt-note.fpk
+          ls -la deploy/fnos-app/zt-note.fpk
+
+      - name: 汇总校验和
+        run: |
+          set -e
+          FPK=deploy/fnos-app/zt-note.fpk
+          ASSET="zt-note_${VERSION}.fpk"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+          echo "SIZE=$(stat -c%s "$FPK")" >> "$GITHUB_ENV"
+          echo "SHA=$(sha256sum "$FPK" | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "$ASSET / $(stat -c%s "$FPK") 字节"
+
+      - name: 拼发布说明
+        run: |
+          set -e
+          NOTES=docs/releases/$VERSION.md
+          OUT=/tmp/notes.md
+          : > "$OUT"
+          if [ -f "$NOTES" ]; then
+            echo "== 手写说明：$NOTES"
+            cat "$NOTES" >> "$OUT"
+            echo >> "$OUT"
+          else
+            echo "== 没有 $NOTES，正文只用自动生成的部分"
+          fi
+          {
+            echo "## 下载与安装"
+            echo
+            echo "飞牛 → 应用中心 → 手动安装 → 选 **\`$ASSET\`**；命令行则 \`bash deploy/fnos-app/install.sh --no-bump\`。"
+            echo "已装应用的升级只能走 \`install-local\`（\`install-fpk\` 对已装应用是空操作，版本号更高也不换文件）。"
+            echo
+            echo "| 附件 | 大小 | SHA-256 |"
+            echo "|---|---|---|"
+            echo "| \`$ASSET\` | $SIZE 字节 | \`$SHA\` |"
+            echo
+            PREV="$(git tag --sort=-v:refname | grep -vx "$RELEASE_TAG" | head -n1 || true)"
+            if [ -n "$PREV" ]; then
+              echo "## 本次包含的提交（$PREV..$RELEASE_TAG）"
+              echo
+              git log --no-merges --pretty='- %s（%h）' "$PREV..$RELEASE_TAG^0"
+            else
+              echo "## 本次包含的提交"
+              echo
+              git log --no-merges --pretty='- %s（%h）' -30 "$RELEASE_TAG^0"
+            fi
+            echo
+            echo "> 由 \`.github/workflows/release.yml\` 自动构建并上传（含 vet/单测/前端逻辑测试）。"
+          } >> "$OUT"
+          cat "$OUT"
+
+      - name: 建/更新 Release 并上传 fpk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          FPK=deploy/fnos-app/zt-note.fpk
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "== Release $RELEASE_TAG 已存在，覆盖附件与说明"
+            gh release upload "$RELEASE_TAG" "$FPK#$ASSET" --clobber
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file /tmp/notes.md
+          else
+            echo "== 新建 Release $RELEASE_TAG"
+            gh release create "$RELEASE_TAG" "$FPK#$ASSET" \
+              --title "$RELEASE_TAG" --notes-file /tmp/notes.md --verify-tag
+          fi
+          gh release view "$RELEASE_TAG" --json url,isDraft,assets \
+            --jq '"页面: \(.url)\ndraft: \(.isDraft)\n附件: " + ([.assets[] | "\(.name) \(.size) 字节"] | join(", "))'
