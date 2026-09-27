@@ -217,3 +217,11 @@ docs/PROGRESS.md     进度与待办
 - 未实现：块引用/块属性面板、标签与书签、图纸/数据库等衍生块类型的编辑
 - 应用内没有账号体系：身份由网关（飞牛账号）决定，密码也就是飞牛的；应用自己只有 6 位 PIN
   （只守浏览入口，不加密数据）
+
+## 许可证
+
+[MIT](LICENSE) © 2026 zhangtown。可以随意使用、修改、再发布（含商用），保留版权声明即可。
+
+项目里用到的第三方组件仍是它们自己的许可：前端编辑器 TipTap / ProseMirror（MIT）、构建链
+Vite + TypeScript（MIT）、后端只用 Go 标准库（BSD-3-Clause）。发布的 `.fpk` 里跑的就是这些依赖
+的打包产物。飞牛 fnOS 的包格式（`manifest` / `app.tgz` / `appcenter-cli`）使用方式以飞牛官方说明为准。
