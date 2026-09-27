@@ -2219,7 +2219,7 @@ async function main() {
           }
         })()`)
 
-      await cdp.clickElement(byText('.zt-toolbar .tb-btn', '表格'), '工具条「表格」按钮')
+      await cdp.clickElement(`document.querySelector('.zt-toolbar .tb-btn[data-tool="table"]')`, '工具条「表格」按钮')
       await cdp.waitFor(`document.querySelectorAll('.ProseMirror table').length === 1`, 8000, '编辑器内出现表格')
       const s1 = await tableShape()
       check('12-表格', '插入 3×3 表格，且首行是表头（th×3）', s1?.rows === 3 && s1?.cols === 3 && s1?.th === 3, JSON.stringify(s1))
@@ -2465,9 +2465,20 @@ async function main() {
           const tb = document.querySelectorAll('.zt-toolbar .tb-btn')
           const heights = Array.prototype.slice.call(tb).map((b) => Math.round(b.getBoundingClientRect().height))
           const cs = getComputedStyle(document.querySelector('.zt-editor-scroll'))
+          const rowsObj = {}
+          const btns = Array.prototype.slice.call(tb)
+          btns.forEach((b) => {
+            rowsObj[Math.round(b.getBoundingClientRect().top)] = 1
+          })
           return {
             btnCount: tb.length,
             minBtn: heights.length ? Math.min.apply(null, heights) : 0,
+            rows: Object.keys(rowsObj).length,
+            toolbarH: Math.round(document.querySelector('.zt-toolbar').getBoundingClientRect().height),
+            svgCount: btns.filter((b) => b.querySelector('.tb-ico svg')).length,
+            glyphCount: btns.filter((b) => b.querySelector('.tb-glyph')).length,
+            cjk: btns.filter((b) => /[\u4e00-\u9fa5]/.test(b.textContent || '')).length,
+            codeBarOpen: !!document.querySelector('.tb-codebar.is-open'),
             editorFont: parseFloat(getComputedStyle(document.querySelector('.ProseMirror')).fontSize),
             maxH: cs.maxHeight, minH: cs.minHeight,
             innerHeight: window.innerHeight,
@@ -2487,8 +2498,36 @@ async function main() {
           JSON.stringify({ maxH: ed?.maxH, 期望: `${refH - 210}px`, minH: ed?.minH, clientH: ed?.clientH, innerHeight: ed?.innerHeight }),
         )
         check('13-编辑', '工具条在首屏内（bottom < 视口高）', (ed?.toolbarBottom ?? 9999) < 844, String(ed?.toolbarBottom))
+        // 本轮改动：格式栏图标化 + 窄屏稳定两行（原来按文字宽度随机折行，最窄能折成四行 ~190px）
+        check(
+          '13-编辑',
+          '格式栏图标化（无中文文字标签；B/I/S/</>/H1-H3 用字型，其余 10 个用 SVG）',
+          (ed?.cjk ?? 99) === 0 && ed?.glyphCount === 7 && ed?.svgCount === 10,
+          JSON.stringify({ 中文标签: ed?.cjk, 字型: ed?.glyphCount, 图标: ed?.svgCount, 共: ed?.btnCount }),
+        )
+        check(
+          '13-编辑',
+          '窄屏格式栏稳定两行且总高 ≤84px',
+          ed?.rows === 2 && (ed?.toolbarH ?? 999) <= 84,
+          JSON.stringify({ 行数: ed?.rows, 高度: ed?.toolbarH }),
+        )
+        check('13-编辑', '代码语言行默认不占位（只在代码块内出现）', ed?.codeBarOpen === false, String(ed?.codeBarOpen))
+        // 代码块 ↔ 语言行联动：插代码块后语言行展开，撤销后收回去
+        await cdp.clickElement(`document.querySelector('.zt-toolbar .tb-btn[data-tool="codeBlock"]')`, '窄屏工具条「代码块」按钮')
+        await sleep(200)
+        const cbOn = await cdp.evalJs(`(() => {
+          const b = document.querySelector('.tb-codebar')
+          const i = document.querySelector('.tb-lang')
+          const r = b ? b.getBoundingClientRect() : null
+          return { open: !!b && b.classList.contains('is-open'), h: r ? Math.round(r.height) : 0, enabled: i ? !i.disabled : false }
+        })()`)
+        check('13-编辑', '光标进代码块后「代码语言」自动展开', cbOn?.open === true && (cbOn?.h ?? 0) > 0 && cbOn?.enabled === true, JSON.stringify(cbOn))
+        await cdp.clickElement(`document.querySelector('.zt-toolbar .tb-btn[data-tool="undo"]')`, '窄屏工具条「撤销」')
+        await sleep(200)
+        const cbOff = await cdp.evalJs(`!!document.querySelector('.tb-codebar.is-open')`)
+        check('13-编辑', '离开代码块后语言行收回去（不常驻）', cbOff === false, String(cbOff))
 
-        await cdp.clickElement(byText('.zt-toolbar .tb-btn', '表格'), '窄屏工具条「表格」按钮')
+        await cdp.clickElement(`document.querySelector('.zt-toolbar .tb-btn[data-tool="table"]')`, '窄屏工具条「表格」按钮')
         await cdp.waitFor(`document.querySelectorAll('.ProseMirror table').length === 1`, 8000, '窄屏下插入表格')
         // 往第一格塞长文本：逼表格超过视口宽，看它自己滚还是把整页撑宽
         await cdp.evalJs(`(() => {

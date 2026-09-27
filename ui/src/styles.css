@@ -873,30 +873,36 @@ mark {
   overflow: hidden;
 }
 
+/* 格式工具条：图标化 + 紧凑两行（参考 iOS 备忘录那条格式栏）。
+   以前是文字标签（「无序列表」「分隔线」…），窄屏上按文字宽度随机折行、能折成四行还带个语言输入框。 */
 .zt-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 2px;
+  padding: 4px 8px;
   background: var(--panel-soft);
   border-bottom: 1px solid var(--border);
 }
 
 .tb-btn {
-  min-width: 28px;
-  height: 26px;
-  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 6px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text);
   cursor: pointer;
   line-height: 1;
+  font-size: 13px;
 }
 
 .tb-btn:hover {
-  background: #eceff3;
+  background: #e9edf3;
 }
 
 .tb-btn.is-active {
@@ -905,11 +911,76 @@ mark {
   color: #14459f;
 }
 
+.tb-ico svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+
+.tb-glyph {
+  display: block;
+  font-weight: 500;
+}
+
+/* 文字图标的字型微调：B 加粗、I 斜体、S 带删除线、</> 等宽、Hn 小号半粗 */
+.tb-bold .tb-glyph {
+  font-weight: 800;
+}
+
+.tb-italic .tb-glyph {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-size: 15px;
+}
+
+.tb-strike .tb-glyph {
+  text-decoration: line-through;
+}
+
+.tb-code .tb-glyph {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: -0.4px;
+}
+
+.tb-h1 .tb-glyph,
+.tb-h2 .tb-glyph,
+.tb-h3 .tb-glyph {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
 .tb-sep {
   width: 1px;
-  height: 18px;
+  height: 14px;
   background: var(--border-strong);
-  margin: 0 3px;
+  margin: 0 5px;
+  opacity: 0.8;
+}
+
+/* 窄屏才生效的换行点（宽屏上收成一行）：让折行落在一行的分组边界上 */
+.tb-break {
+  display: none;
+}
+
+/* 代码块语言：只当光标在代码块里时出现，不再常驻工具条占一整行 */
+.tb-codebar {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.tb-codebar.is-open {
+  display: flex;
+}
+
+.tb-codebar-label {
+  font-size: 12px;
+  color: #14459f;
 }
 
 /* 表格操作条：光标进表格才显示 */
@@ -1664,14 +1735,46 @@ mark {
   }
 
   .zt-toolbar {
-    gap: 5px;
-    padding: 6px;
+    gap: 1px;
+    padding: 3px 6px;
+  }
+
+  /* 窄屏：稳定分成两行（文字格式 ／ 块与插入），不再按文字宽度乱折 */
+  .tb-break {
+    display: block;
+    flex-basis: 100%;
+    height: 0;
+  }
+
+  /* 折行后的第一个分隔线不要（否则新行开头挂一根竖线） */
+  .tb-break + .tb-sep {
+    display: none;
   }
 
   .tb-btn {
-    min-width: 34px;
+    min-width: 31px;
     height: 32px;
-    font-size: 14px;
+    padding: 0 4px;
+  }
+
+  /* 字型图标本来就窄（B/I/S/H1），给它们更小的下限：窄屏一行才放得下 9 个 */
+  .tb-bold,
+  .tb-italic,
+  .tb-strike,
+  .tb-code,
+  .tb-h1,
+  .tb-h2,
+  .tb-h3 {
+    min-width: 27px;
+  }
+
+  .tb-ico svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .tb-sep {
+    margin: 0 3px;
   }
 
   .tb-tablebar {

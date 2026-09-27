@@ -51,8 +51,13 @@ export interface EditorHandle {
 
 interface ToolItem {
   id: string
+  /** 人类可读名：只给 aria-label / 无障碍用，不再当可见文字（工具条已图标化） */
   label: string
   title: string
+  /** 单字符文本图标（B / I / S / </> / H1…），与 icon 二选一 */
+  glyph?: string
+  /** 内联 SVG 图标：同色同粗细，不受系统 emoji 字体影响 */
+  icon?: string
   run: (editor: Editor) => void
   active?: (editor: Editor) => boolean
 }
@@ -80,13 +85,14 @@ const CTX_ITEMS: Record<string, { label: string; hint?: string; icon?: string }>
 
 /** 正文右键菜单：常用格式 + 剪贴板 + 撤销重做（表格里再多一排表格操作）。 */
 function buildContextMenu(editor: Editor): MenuItem[] {
-  const toolOf = (id: string) => TOOLS.find((t) => t !== 'sep' && t.id === id) as ToolItem | undefined
+  const toolOf = (id: string) =>
+    TOOLS.find((t) => typeof t !== 'string' && t.id === id) as ToolItem | undefined
   const item = (id: string): MenuItem | null => {
     const tool = toolOf(id)
     const meta = CTX_ITEMS[id]
     if (!tool || !meta) return null
     return {
-      icon: meta.icon ?? tool.label,
+      icon: meta.icon ?? tool.glyph ?? '',
       label: meta.label,
       hint: meta.hint,
       onClick: () => {
@@ -196,31 +202,67 @@ const FlashExtension = Extension.create({
   addProseMirrorPlugins: () => [flashPlugin],
 })
 
-const TOOLS: Array<ToolItem | 'sep'> = [
+/** 工具条图标：16 网格、stroke=currentColor（跟正文同色）、细线风格——参考 iOS 备忘录那条格式栏。 */
+const I = (body: string) =>
+  `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`
+
+const TOOL_ICONS = {
+  bulletList: I(
+    '<circle cx="3.5" cy="4.5" r="1.05" fill="currentColor" stroke="none"/><circle cx="3.5" cy="8" r="1.05" fill="currentColor" stroke="none"/><circle cx="3.5" cy="11.5" r="1.05" fill="currentColor" stroke="none"/><path d="M6.7 4.5h6.3M6.7 8h6.3M6.7 11.5h6.3"/>',
+  ),
+  orderedList: I(
+    '<path d="M2.6 3.4h1.1v3.3M2.5 6.7h2.3"/><path d="M2.4 9.4c.2-.5.9-.8 1.5-.5.8.4.9 1.4.2 2.05L2.3 12.6h3"/><path d="M7.1 4.6h5.9M7.1 8h5.9M7.1 11.4h5.9"/>',
+  ),
+  blockquote: I('<path d="M3.2 3.6v8.8"/><path d="M6.5 5.3h6.3M6.5 8h6.3M6.5 10.7h4.3"/>'),
+  codeBlock: I(
+    '<rect x="2.2" y="3.2" width="11.6" height="9.6" rx="1.8"/><path d="M6.9 6.7 5.5 8l1.4 1.3M9.1 6.7 10.5 8l-1.4 1.3"/>',
+  ),
+  horizontalRule: I('<path d="M2.6 8h10.8"/>'),
+  link: I(
+    '<path d="M6.8 9.2a2.5 2.5 0 0 0 3.5 0l1.8-1.8a2.5 2.5 0 0 0-3.5-3.5l-.7.7"/><path d="M9.2 6.8a2.5 2.5 0 0 0-3.5 0L3.9 8.6a2.5 2.5 0 0 0 3.5 3.5l.7-.7"/>',
+  ),
+  image: I(
+    '<rect x="2.3" y="3.3" width="11.4" height="9.4" rx="1.8"/><circle cx="5.9" cy="6.5" r="1.1"/><path d="M3.2 11.9 6.8 8.7l2.2 1.9 1.7-1.5 1.9 1.7"/>',
+  ),
+  table: I(
+    '<rect x="2.3" y="3.4" width="11.4" height="9.2" rx="1.5"/><path d="M2.3 6.5h11.4M2.3 9.5h11.4M6.4 3.4v9.2"/>',
+  ),
+  undo: I('<path d="M5.9 5.5h3.7a3.4 3.4 0 0 1 0 6.8H6.3"/><path d="M7.7 3 5.1 5.5l2.6 2.5"/>'),
+  redo: I('<path d="M10.1 5.5H6.4a3.4 3.4 0 0 0 0 6.8h3.3"/><path d="M8.3 3 10.9 5.5 8.3 8"/>'),
+}
+
+/** 工具条分组：文字格式 → 标题 → 链接 ／ 块结构 → 插入 → 撤销重做。
+ *  `row` 是窄屏才生效的换行点（宽屏上收成一行），保证折行落在一行的分组边界上，
+ *  这样窄屏稳定是两行，不会像以前那样按文字宽度随机折成四行。 */
+const TOOLS: Array<ToolItem | 'sep' | 'row'> = [
   {
     id: 'bold',
-    label: 'B',
+    label: '粗体',
+    glyph: 'B',
     title: '粗体 (Ctrl+B)',
     run: (e) => e.chain().focus().toggleBold().run(),
     active: (e) => e.isActive('bold'),
   },
   {
     id: 'italic',
-    label: 'I',
+    label: '斜体',
+    glyph: 'I',
     title: '斜体 (Ctrl+I)',
     run: (e) => e.chain().focus().toggleItalic().run(),
     active: (e) => e.isActive('italic'),
   },
   {
     id: 'strike',
-    label: 'S',
+    label: '删除线',
+    glyph: 'S',
     title: '删除线',
     run: (e) => e.chain().focus().toggleStrike().run(),
     active: (e) => e.isActive('strike'),
   },
   {
     id: 'code',
-    label: '</>',
+    label: '行内代码',
+    glyph: '</>',
     title: '行内代码',
     run: (e) => e.chain().focus().toggleCode().run(),
     active: (e) => e.isActive('code'),
@@ -228,73 +270,85 @@ const TOOLS: Array<ToolItem | 'sep'> = [
   'sep',
   {
     id: 'h1',
-    label: 'H1',
+    label: '一级标题',
+    glyph: 'H1',
     title: '一级标题',
     run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run(),
     active: (e) => e.isActive('heading', { level: 1 }),
   },
   {
     id: 'h2',
-    label: 'H2',
+    label: '二级标题',
+    glyph: 'H2',
     title: '二级标题',
     run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(),
     active: (e) => e.isActive('heading', { level: 2 }),
   },
   {
     id: 'h3',
-    label: 'H3',
+    label: '三级标题',
+    glyph: 'H3',
     title: '三级标题',
     run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run(),
     active: (e) => e.isActive('heading', { level: 3 }),
   },
   'sep',
   {
+    id: 'link',
+    label: '插入 / 修改链接',
+    icon: TOOL_ICONS.link,
+    title: '插入/修改链接 (Ctrl+K)',
+    run: (e) => {
+      void editLink(e)
+    },
+    active: (e) => e.isActive('link'),
+  },
+  'row',
+  'sep',
+  {
     id: 'bulletList',
-    label: '• 列表',
-    title: '无序列表',
+    label: '无序列表',
+    icon: TOOL_ICONS.bulletList,
+    title: '无序列表 (Ctrl+Shift+8)',
     run: (e) => e.chain().focus().toggleBulletList().run(),
     active: (e) => e.isActive('bulletList'),
   },
   {
     id: 'orderedList',
-    label: '1. 列表',
-    title: '有序列表',
+    label: '有序列表',
+    icon: TOOL_ICONS.orderedList,
+    title: '有序列表 (Ctrl+Shift+7)',
     run: (e) => e.chain().focus().toggleOrderedList().run(),
     active: (e) => e.isActive('orderedList'),
   },
   {
     id: 'blockquote',
     label: '引用',
-    title: '引用块',
+    icon: TOOL_ICONS.blockquote,
+    title: '引用块 (Ctrl+Shift+B)',
     run: (e) => e.chain().focus().toggleBlockquote().run(),
     active: (e) => e.isActive('blockquote'),
   },
   {
     id: 'codeBlock',
     label: '代码块',
-    title: '代码块',
+    icon: TOOL_ICONS.codeBlock,
+    title: '代码块 (Ctrl+Alt+C)',
     run: (e) => e.chain().focus().toggleCodeBlock().run(),
     active: (e) => e.isActive('codeBlock'),
   },
   {
     id: 'horizontalRule',
     label: '分隔线',
+    icon: TOOL_ICONS.horizontalRule,
     title: '水平线',
     run: (e) => e.chain().focus().setHorizontalRule().run(),
   },
   'sep',
   {
-    id: 'link',
-    label: '链接',
-    title: '插入/修改链接',
-    run: (e) => {
-      void editLink(e)
-    },
-    active: (e) => e.isActive('link'),
-  },
-  {
     id: 'image',
-    label: '图片',
+    label: '插入图片',
+    icon: TOOL_ICONS.image,
     title: '插入图片（URL 或上传到服务器）',
     run: (e) => {
       void insertImage(e)
@@ -302,7 +356,8 @@ const TOOLS: Array<ToolItem | 'sep'> = [
   },
   {
     id: 'table',
-    label: '表格',
+    label: '插入表格',
+    icon: TOOL_ICONS.table,
     title: '插入 3×3 表格（首行为表头）',
     run: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
     active: (e) => e.isActive('table'),
@@ -310,13 +365,15 @@ const TOOLS: Array<ToolItem | 'sep'> = [
   'sep',
   {
     id: 'undo',
-    label: '↶',
+    label: '撤销',
+    icon: TOOL_ICONS.undo,
     title: '撤销 (Ctrl+Z)',
     run: (e) => e.chain().focus().undo().run(),
   },
   {
     id: 'redo',
-    label: '↷',
+    label: '重做',
+    icon: TOOL_ICONS.redo,
     title: '重做 (Ctrl+Shift+Z)',
     run: (e) => e.chain().focus().redo().run(),
   },
@@ -511,12 +568,21 @@ export function createEditor(opts: { blocks: Block[]; onChange?: () => void }): 
   )
 
   const uploads = h('div', { class: 'zt-uploads' })
+  // 光标进代码块时才出现的一排（默认隐藏）：语言选择以前常驻在工具条里，白白多占一整行
+  const codeBar = h(
+    'div',
+    { class: 'tb-codebar' },
+    h('span', { class: 'tb-codebar-label' }, '代码语言'),
+    h('span', { class: 'tb-lang-wrap', title: '光标在代码块里时可设置语言' }, langInput),
+    langList,
+  )
   // 光标进表格时才出现的一排操作（默认隐藏，避免常驻工具条太长）
   const tableBar = h('div', { class: 'tb-tablebar' })
   const element = h(
     'div',
     { class: 'zt-editor' },
     toolbar,
+    codeBar,
     tableBar,
     uploads,
     h('div', { class: 'zt-editor-scroll' }, editorHost),
@@ -604,27 +670,30 @@ export function createEditor(opts: { blocks: Block[]; onChange?: () => void }): 
       toolbar.appendChild(h('span', { class: 'tb-sep' }))
       continue
     }
+    if (item === 'row') {
+      toolbar.appendChild(h('span', { class: 'tb-break' }))
+      continue
+    }
     const btn = h(
       'button',
       {
         class: `tb-btn tb-${item.id}`,
         type: 'button',
         title: item.title,
+        'aria-label': item.label,
+        dataset: { tool: item.id },
         onclick: () => {
           item.run(editor)
           refresh()
         },
       },
-      item.label,
+      item.icon
+        ? h('span', { class: 'tb-ico', html: item.icon })
+        : h('span', { class: 'tb-glyph' }, item.glyph ?? ''),
     )
     buttons.set(item.id, btn)
     toolbar.appendChild(btn)
   }
-  toolbar.appendChild(h('span', { class: 'tb-sep' }))
-  toolbar.appendChild(
-    h('span', { class: 'tb-lang-wrap', title: '选中代码块后可设置语言' }, langInput),
-  )
-  toolbar.appendChild(langList)
 
   for (const item of TABLE_ACTIONS) {
     tableBar.appendChild(
@@ -661,7 +730,7 @@ export function createEditor(opts: { blocks: Block[]; onChange?: () => void }): 
 
   const refresh = () => {
     for (const item of TOOLS) {
-      if (item === 'sep') continue
+      if (typeof item === 'string') continue
       const btn = buttons.get(item.id)
       if (!btn) continue
       const on = item.active ? item.active(editor) : false
@@ -670,6 +739,7 @@ export function createEditor(opts: { blocks: Block[]; onChange?: () => void }): 
     const inTable = editor.isActive('table')
     tableBar.classList.toggle('is-open', inTable)
     const inCode = editor.isActive('codeBlock')
+    codeBar.classList.toggle('is-open', inCode)
     langInput.disabled = !inCode
     if (document.activeElement !== langInput) {
       const lang = (editor.getAttributes('codeBlock').language as string | null | undefined) ?? ''
