@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +55,31 @@ func TestNotebookEndpointsStatusCodes(t *testing.T) {
 	}
 	if resp, _, _ = h.call(http.MethodPost, "/api/notebook/delete", `{"id":"`+box+`"}`, auth()); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("重复删除应 404，实际 %d", resp.StatusCode)
+	}
+}
+
+// 没注册过的 /api/* 必须是 404 JSON，绝不能是「200 + index.html」——
+// 后者会让客户端以为调用成功（曾经在 /api/notebook/delete 上骗过一轮排查：接口根本没实现）。
+func TestUnknownAPIRouteIs404(t *testing.T) {
+	h := newTokenHarness(t)
+	token := h.unlockAs("1000", "135790")
+	auth := func() map[string]string { return h.withUID("1000", "X-Zt-Token: "+token) }
+
+	for _, path := range []string{"/api/nope", "/api/notebook/delete/extra", "/api/doc/save2"} {
+		resp, _, raw := h.call(http.MethodPost, path, `{}`, auth())
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s 应 404，实际 %d %s", path, resp.StatusCode, clipForTest(raw))
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+			t.Fatalf("%s 应当是 JSON 错误而不是前端页面，Content-Type=%q", path, ct)
+		}
+		if strings.Contains(string(raw), "<html") {
+			t.Fatalf("%s 返回了 index.html：%s", path, clipForTest(raw))
+		}
+	}
+
+	// 已注册的接口不受影响
+	if resp, _, raw := h.call(http.MethodGet, "/api/tree", "", auth()); resp.StatusCode != http.StatusOK {
+		t.Fatalf("/api/tree 应 200，实际 %d %s", resp.StatusCode, clipForTest(raw))
 	}
 }

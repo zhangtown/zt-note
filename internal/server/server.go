@@ -88,6 +88,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/export/siyuan", s.handleExportSiyuan)
 	mux.HandleFunc("/api/export/md", s.handleExportMarkdown)
 	mux.HandleFunc("/api/assets/upload", s.write(s.handleAssetUpload))
+	// 没注册过的 /api/* 统统 404（JSON）：不兜住就会落进下面的 / 静态回退，
+	// 返回「200 + index.html」——看起来像成功，实则什么都没做（曾经在 /api/notebook/delete 上骗过一轮排查）
+	mux.HandleFunc("/api/", s.handleUnknownAPI)
 	mux.HandleFunc("/assets/", s.handleAsset)
 	mux.HandleFunc("/", s.handleStatic)
 	return s.stripPrefix(s.identify(s.logRequests(s.guard(mux))))
@@ -654,6 +657,11 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	http.ServeFile(w, r, p)
+}
+
+// handleUnknownAPI 兜住没注册过的 /api/* 路径：404 + JSON，而不是静态回退的 index.html。
+func (s *Server) handleUnknownAPI(w http.ResponseWriter, r *http.Request) {
+	fail(w, http.StatusNotFound, "未知接口: "+r.URL.Path)
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
