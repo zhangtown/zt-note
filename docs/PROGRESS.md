@@ -13,7 +13,7 @@
 | 6 | 前端 | `ui/`（Vite + TipTap）：树/文档/编辑/搜索/导入导出；产物内嵌 `internal/webui/dist` |
 | 7 | 接口级端到端 | `.test/e2e.py` 50/50 全绿（含“不改动直接保存 → 文件字节不变”、搜索 blockId 契约、资源上传/命名/引用改写） |
 | 8 | UI 联调（严格模式） | `ui/scripts/e2e-live.mjs` 105/105 全绿：真实 Go 后端 + 无头 Chrome 走完「点开 → 编辑 → 保存 → 磁盘核对 → 无改动保存 → 搜索整篇/块定位 → 导出比对 → 粘贴上传图片 → 表格插入/增删行列/`.sy` 往返」，报告 `ui/E2E-LIVE-REPORT.md` |
-| 9 | 打包与实机部署 | `zt-note.fpk` 3.4 MB 已装到 your-nas.local（版本 0.1.1），12 篇真实笔记已导入并可读 |
+| 9 | 打包与实机部署 | 已装到 your-nas.local，当前版本 0.3.0（`bash deploy/fnos-app/install.sh --no-bump` 一键升级；`install-fpk` 对已装应用无效，见下文坑）。实机核对（走应用 socket API）：12 篇文档、22 个资源、17 个图片节点请求全部 200，一行多图 `div.img-rows` 与块 `data-node-id` 正常，搜索标题命中按契约不带 `blockId` |
 | 10 | 图片与资源 | 编辑器粘贴/拖拽/按钮上传（`api/assets/upload`）；排版保真（`parent-style`/`style` 一行多图）；修掉“导入后图片全 404”（`internal/importer` 资源改名未改写引用） |
 | 11 | 表格编辑 | 思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格双向映射（`internal/siyuan/pm.go` 的 `tableToPM`/`pmTableToSy`、`model.go` 的 `TableRows`/`TableColumns`/`TableSpan`）；插入 3×3 + 浮动操作条；`colgroup`/对齐/合并单元格往返。证据：`internal/siyuan/table_test.go` 全绿（含“只有 `NodeTableHead` 的表格不能丢表头行”“未改动表格 sha 不变”），前端逻辑测试 34/34，浏览器 e2e 20 项表格断言全绿 |
 
@@ -36,7 +36,11 @@
   `install-local -d <解包目录> -v <卷>`，详见 `deploy/README.md` 第 5 节
 - **静态资源路径**：网关会给响应自动加 `/app/zt-note` 前缀，前端必须全部用 `./` 相对路径，
   否则 `assets/index-*.js` 会变成 `/assets/...` 而 404（`ui/scripts/e2e-live.mjs` 严格模式已固化断言）
-- **搜索块定位**需要三件事同时成立：标题命中不带 `blockId`、正文命中带真实块 ID、
+- **实机核对只能走应用的 socket API**：工作区目录属 app 用户，SSH 进来读不到（`sudo -n` 只放行了
+  `appcenter-cli`）。可用的路子：`curl --unix-socket /var/apps/zt-note/target/app.sock http://localhost/api/...`；
+  要看资源清单就导一份 `api/export/siyuan` 的 zip 再列条目。注意 `ok()` 把字段**平铺在顶层**（不是 `data` 包一层）
+- **资源名里可能有空格/中文**（思源截图常见）：核对资源是否能 200 时必须做百分号编码，
+  否则 curl 传空格会得到 `000` 而不是 404，看起来像坏引用（浏览器会自动编码，不影响实际使用）
   阅读视图 HTML 带 `data-node-id`（缺一就会出现“跳转了但不高亮”）
 - 改完前端必须重建 Go 二进制（`build.sh` 会自动判断）；`.test/` 与 `internal/webui/dist` 不入库
   （`internal/webui/dist/.gitkeep` 是唯一入库的文件：`go:embed all:dist` 要求目录存在）
