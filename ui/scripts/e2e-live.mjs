@@ -84,7 +84,10 @@ const MIME = {
  *   1) .test/e2e-live.local.json（已被 .gitignore 忽略，本机专用）；格式见 e2e-live.local.example.json
  *   2) 同名环境变量：SIYUAN_DATA / EXPECT_NOTEBOOKS / EXPECT_DOCS / EXPECT_BLOCKS / EXPECT_ASSETS /
  *      SAMPLE_BOXES（逗号分隔，第一个是示例文档所在笔记本）/ SAMPLE_DOC_BOX / DOC_TITLE /
- *      READ_TEXT（逗号分隔）/ DOC_HASH（「boxId/docId」）。
+ *      READ_TEXT（逗号分隔）/ IMG_ROWS_HASH（图片行示例文档的「boxId/docId」，11b 用）/ SEARCH_TERM。
+ *
+ * SEARCH_TERM 必须是一个「编辑阶段跑完也还在」的词（那几个阶段会改写文档第一个块），
+ * 默认取文档标题；本机想跟以前一样搜标题里的片段，就在配置里写 searchTerm。
  */
 const LOCAL = (() => {
   const f = join(TEST, 'e2e-live.local.json')
@@ -112,11 +115,12 @@ const EXPECT_STATS = {
 const SAMPLE_BOXES = cfgList('boxes', 'SAMPLE_BOXES')
 const DOC_TITLE = String(cfg('docTitle', 'DOC_TITLE'))
 const READ_TEXT = cfgList('readText', 'READ_TEXT')
-const DOC_HASH = String(cfg('docHash', 'DOC_HASH'))
-const SEARCH_TERM = String(cfg('searchTerm', 'SEARCH_TERM')) || READ_TEXT[0]
-if (!SIYUAN_DATA || !DOC_TITLE || !READ_TEXT.length || !DOC_HASH) {
+const IMG_ROWS_HASH = String(cfg('imgRowsHash', 'IMG_ROWS_HASH'))
+// 搜索词要能挺过前面的编辑阶段（它们会改写文档首块），所以默认用标题
+const SEARCH_TERM = String(cfg('searchTerm', 'SEARCH_TERM')) || DOC_TITLE
+if (!SIYUAN_DATA || !DOC_TITLE || !READ_TEXT.length || !IMG_ROWS_HASH) {
   console.error('缺少示例库参数：请创建 .test/e2e-live.local.json（可照抄 ui/scripts/e2e-live.local.example.json），')
-  console.error('或设置环境变量 SIYUAN_DATA / DOC_TITLE / READ_TEXT / DOC_HASH。')
+  console.error('或设置环境变量 SIYUAN_DATA / DOC_TITLE / READ_TEXT / IMG_ROWS_HASH。')
   process.exit(2)
 }
 // 第一次进入会白送一个「我的笔记」+ 一篇欢迎文档，盘点时要算进去
@@ -124,7 +128,8 @@ const WELCOME_BOX = '我的笔记'
 const EXPECT_BOXES = EXPECT_STATS.notebooks + 1
 const EXPECT_DOCS = EXPECT_STATS.docs + 1
 // 示例文档所在笔记本（导入库里的第一个笔记本）；注意标题常量来自 .test/e2e-live.local.json
-const DOC_BOX = String(cfg('docBox', 'SAMPLE_DOC_BOX'))const TEST_PIN = '135790'
+const DOC_BOX = String(cfg('docBox', 'SAMPLE_DOC_BOX'))
+const TEST_PIN = '135790'
 
 const argv = new Set(process.argv.slice(2))
 const FORCE_BUILD = argv.has('--build')
@@ -2124,13 +2129,12 @@ async function main() {
   }
 
   /* --- 11b. 图片行排版：思源 parent-style 宽度还原成「一行四张」--- */
-  log('
-[11b] 图片行排版（阅读视图，示例文档）')
+  log('[11b] 图片行排版（阅读视图，示例文档）')
   try {
     await nav(APP_URL, '回到应用首页')
     await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
     // 直接走 hash 路由，不依赖文档树展开状态
-    await cdp.evalJs(`location.hash = '#/doc/${DOC_HASH}'`)
+    await cdp.evalJs(`location.hash = '#/doc/${IMG_ROWS_HASH}'`)
     await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 20000, '文档打开')
     // 图片行是「后端渲染」时的布局：编辑器里它就是普通段落 + 图片（块本身可编辑），
     // 所以这里不再期待 is-warn 警告，而是核实编辑视图可用 + 原样预览仍是一行四张

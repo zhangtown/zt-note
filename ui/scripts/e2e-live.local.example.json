@@ -9,5 +9,6 @@
   "docBox": "笔记本A",
   "docTitle": "示例文档标题",
   "readText": ["正文里必然出现的一句话", "另一个关键片段"],
-  "docHash": "boxId/docId"
+  "imgRowsHash": "boxId/docId",
+  "searchTerm": "搜索用的词（默认取 docTitle；必须是不被编辑阶段改掉的词，如标题片段）"
 }
