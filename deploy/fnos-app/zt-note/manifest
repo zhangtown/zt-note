@@ -1,5 +1,5 @@
 appname=zt-note
-version=0.5.0
+version=0.6.0
 desc=云记笔记：飞牛上的自托管笔记应用，原生使用思源（SiYuan）文档格式存储。多用户隔离——每个飞牛账号一份独立笔记库，首次进入设 6 位 PIN 锁。可导入思源工作区或 Markdown 导出包，浏览、编辑、搜索，并随时按思源格式回写导出——导出的 data 目录可直接放回思源打开。走统一网关，不占用额外端口。
 display_name=云记笔记
 maintainer=zhangtown

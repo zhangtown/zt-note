@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"ztnote/internal/importer"
 	"ztnote/internal/siyuan"
@@ -68,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/pin/unlock", s.handlePinUnlock)
 	mux.HandleFunc("/api/pin/lock", s.handlePinLock)
 	mux.HandleFunc("/api/pin/change", s.handlePinChange)
+	mux.HandleFunc("/api/pin/revoke", s.handlePinRevoke)
 
 	// 数据接口：未解锁一律 401（由 guard 按 needsUnlock 判断）
 	mux.HandleFunc("/api/tree", s.handleTree)
@@ -256,6 +258,10 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"hasLibrary": s.Users.HasWorkspace(id.UID),
 	}
 	if !locked {
+		rec["sessions"] = s.Sessions.CountFor(id.UID)
+		if exp, ok := s.Sessions.Expires(sessionToken(r), id.UID); ok {
+			rec["sessionExpiresAt"] = exp.UTC().Format(time.RFC3339)
+		}
 		if st, err := s.openStore(id.UID); err == nil {
 			rec["dataDir"] = st.Root
 			rec["stats"] = st.Stat()

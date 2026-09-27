@@ -1870,7 +1870,137 @@ mark {
 .menu-info-sub {
   margin-top: 3px;
   font-size: 11.5px;
-  color: var(--muted);
+  color: var(--text-muted);
+}
+
+/* ---------------- PIN 与安全面板 ---------------- */
+
+/* 面板比普通弹窗宽一点（不支持 :has 的旧浏览器回落 420px：行会换行，不影响使用） */
+.modal:has(.sec) {
+  width: min(560px, 100%);
+}
+
+.sec {
+  max-height: min(62vh, 520px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.sec-status {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+
+.sec-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+
+.sec-label {
+  flex: 0 0 76px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.sec-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.sec-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.sec-block {
+  margin-bottom: 12px;
+}
+
+.sec-block-title {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-soft);
+  margin-bottom: 6px;
+}
+
+.sec-block-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sec-inline-label {
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.sec-select {
+  width: auto;
+  min-width: 132px;
+  padding: 4px 6px;
+}
+
+.sec-hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.sec-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sec-help {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border-strong);
+  padding-top: 6px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+
+.sec-help summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.sec-help p {
+  margin: 6px 0;
+  line-height: 1.65;
+}
+
+.path-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 6px 0;
+}
+
+.path-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 4px 6px;
+  background: #fff;
+}
+
+.sec-steps {
+  margin: 4px 0 4px 18px;
+  padding: 0;
+  line-height: 1.7;
 }
 
 /* 窄屏：只留头像与徽标，名字藏起来省地方 */

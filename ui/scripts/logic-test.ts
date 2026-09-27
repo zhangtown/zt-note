@@ -10,6 +10,14 @@ import Link from '@tiptap/extension-link'
 import { ImageWithLayout } from '../src/image-ext'
 import { tableExtensions } from '../src/table-ext'
 import { isDirty, planSave, sanitizeBlocks, stableStringify } from '../src/docjson'
+import {
+  DEFAULT_AUTOLOCK_MINUTES,
+  autoLockLabel,
+  normalizeAutoLock,
+  readAutoLockMinutes,
+  shouldAutoLock,
+  writeAutoLockMinutes,
+} from '../src/autolock'
 import type { Block } from '../src/types'
 
 let failed = 0
@@ -273,6 +281,46 @@ ok(
   JSON.stringify(imgPlan2[1].pm),
 )
 ok(imgPlan2[0].changed === false, '同一文档里的其它块不受影响')
+
+// ------------------------------------------------------------------ 闲置自动锁定
+
+/** 假的 localStorage（只需要 getItem/setItem） */
+function fakeStore(init: Record<string, string> = {}): Pick<Storage, 'getItem' | 'setItem'> {
+  const m = new Map(Object.entries(init))
+  return {
+    getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
+    setItem: (k: string, v: string) => void m.set(k, v),
+  }
+}
+
+ok(DEFAULT_AUTOLOCK_MINUTES === 30, '默认闲置时长是 30 分钟')
+ok(normalizeAutoLock(null) === 30, '没存过 → 默认')
+ok(normalizeAutoLock('15') === 15, "存的是字符串 '15' → 15")
+ok(normalizeAutoLock('abc') === 30, '垃圾值 → 回落默认')
+ok(normalizeAutoLock('-5') === 30, '负数 → 回落默认')
+ok(normalizeAutoLock('0') === 0, "0 表示永不（不回落默认）")
+ok(normalizeAutoLock('7') === 30, '不在选项里的 7 分钟 → 回落默认')
+ok(
+  autoLockLabel(0) === '永不' && autoLockLabel(30) === '30 分钟' && autoLockLabel(180) === '3 小时',
+  '时长文案',
+  `${autoLockLabel(0)} / ${autoLockLabel(30)} / ${autoLockLabel(180)}`,
+)
+ok(autoLockLabel(120) === '2 小时', '非选项的整小时数也能读出来')
+
+const st1 = fakeStore()
+ok(writeAutoLockMinutes(60, st1) === 60 && readAutoLockMinutes(st1) === 60, '写入 60 分钟后能读回')
+ok(
+  writeAutoLockMinutes(999, st1) === 30 && readAutoLockMinutes(st1) === 30,
+  '写入非法值也被规范化成默认值',
+)
+ok(readAutoLockMinutes(fakeStore({ 'zt.autolock.minutes': '0' })) === 0, '存 0 过夜后仍是永不')
+
+const t0 = 1_700_000_000_000
+ok(shouldAutoLock(t0, t0 + 29 * 60_000, 30) === false, '29 分钟不算闲置')
+ok(shouldAutoLock(t0, t0 + 30 * 60_000, 30) === true, '正好 30 分钟算闲置')
+ok(shouldAutoLock(t0, t0 + 15 * 60_000, 15) === true, '15 分钟档到点就锁')
+ok(shouldAutoLock(t0, t0 + 99 * 3_600_000, 0) === false, '设为永不时多久都不锁')
+ok(shouldAutoLock(Number.NaN, t0, 30) === false, '上次活动时间无效时不锁')
 
 console.log(`\n逻辑自测结果：${passed} 项通过，${failed} 项失败`)
 process.exit(failed ? 1 : 0)

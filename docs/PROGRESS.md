@@ -18,6 +18,7 @@
 | 11 | 表格编辑 | 思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格双向映射（`internal/siyuan/pm.go` 的 `tableToPM`/`pmTableToSy`、`model.go` 的 `TableRows`/`TableColumns`/`TableSpan`）；插入 3×3 + 浮动操作条；`colgroup`/对齐/合并单元格往返。证据：`internal/siyuan/table_test.go` 全绿（含“只有 `NodeTableHead` 的表格不能丢表头行”“未改动表格 sha 不变”），前端逻辑测试 34/34，浏览器 e2e 20 项表格断言全绿 |
 | 12 | 窄屏 / 手机适配 | 纯 CSS 媒体查询（≤720px）：侧栏改抽屉（`body.is-drawer-open` + `.drawer-mask`）、动作收进 ☰/⋯ 面板、目录行 38px / 工具条按钮 32px / 输入框 36px、搜索框与编辑区 ≥16px（免 iOS 聚焦缩放）、阅读与编辑区的表格 `display:block + overflow-x:auto` 自滚、编辑区 `calc(100dvh - 210px)`。新增 `ui/views/topbar.ts` 的 ☰/⋯ 与 `TopbarHandle.closePanels`。证据：e2e 第 13 节 25 项断言全绿（390×844 模拟手机，含“窄屏真插入表格并输入 → 保存后 `.sy` 是 NodeTable”、整页零横向溢出） |
 | 13 | 多用户隔离 + PIN 锁 | 每个飞牛账号一份工作区（`$TRIM_PKGVAR/users/<uid>/workspace`，`internal/users`）；旧单用户库首启自动迁给 `1000`（幂等）；6 位 PIN（PBKDF2-HMAC-SHA256 12 万次 + 每用户盐，`users/<uid>/pin.json`）+ `ztnote_session` Cookie（HttpOnly、30 天、绑 uid）；未解锁时数据接口一律 401（标题/正文/图片都不下发）；首次解锁送《我的笔记》+ 欢迎文档；入口改 `allUsers:true` | `go test ./...` 29 个用例全绿（新增 `internal/users/users_test.go` 7 个 + `internal/server/session_test.go` 8 个：身份头解析/路径穿越/PIN 哈希不含明文/连错 5 次锁 1 分钟/令牌绑 uid/过隔离与 401 门）；浏览器 e2e 153/153（含「PIN 屏→解锁→锁定→错码→换账号」23 项）；前端逻辑 34/34。实机核对 0.5.0（your-nas.local 走应用 socket）：`health` 报告 `users:1`；身份 `1000/zhangtown` → `hasLibrary:true`（旧库迁移成功）、陌生身份 `9999` → `hasLibrary:false`（隔离）、未解锁 `/api/tree` → 401 `{"error":"locked"}`；用户实测浏览器：设 PIN → 12 篇笔记与图片都在（即飞牛网关确实注入了 `X-Trim-Userid`） |
+| 14 | PIN 管理页（会话可见 + 撤销设备 + 闲置自动锁定） | `api/session` 增 `sessions`/`sessionExpiresAt`（`SessionManager.CountFor`/`Expires`，`DropUser` 开始返回注销数量）；新增 `POST api/pin/revoke`（作废该账号其它会话、本机换新令牌）；前端顶栏名字菜单新增「PIN 与安全…」面板——身份/本次解锁到期/已解锁设备/数据目录，自动锁定时长下拉（15/30/60/180/永不，存 `localStorage.zt.autolock.minutes`，默认 30 分钟），「修改 PIN」「撤销其它设备」「立即锁定」，以及「忘记 PIN」折叠指引（一键复制 `users/<uid>/pin.json` 路径）；新增 `ui/src/autolock.ts`（活动监听 + 闲置判定，纯函数可测）；到点自动锁定走 `api/pin/lock` 并提示「闲置太久，已自动上锁」 | `go test ./...` 31 个用例全绿（新增 `TestSessionCountAndExpiry`、`TestHTTPPinRevoke` 两个，PIN 门清单补 `/api/pin/revoke`）；前端逻辑 51/51（新增 17 项自动锁定用例）；浏览器 e2e 172/172（新增「3b-PIN管理」13 项：面板字段/5 档时长/localStorage 落盘/撤销后其它令牌 401/本机不受影响/菜单提示跟随设置） |
 
 ## 待办
 
@@ -28,11 +29,10 @@
 - [ ] 块引用 / 块属性面板（`.sy` 里已保留原始字段，属于“读得懂写不回”）
 - [x] 表格编辑（思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格；插入、增删行列、表头行、`.sy` 往返）
 - [ ] 标签、书签、日记本等思源衍生块
-- [ ] PIN 管理页（现只有「锁」与「改」接口，前端只接了锁定按钮；改 PIN/忘了 PIN 的引导还在 PIN 屏文案里）
+- [x] PIN 管理页（「PIN 与安全…」面板：会话状态、自动锁定、撤销其它设备、忘记 PIN 指引；后端 `api/pin/revoke`）
 - [ ] 每用户配额/存储占用提示
 - [ ] 实机验证两个普通账号互相看不到对方的库（开发环境已用两个身份头验过）
 - [ ] 定时/手动备份工作区（或写进 fpk 的 lifecycle 脚本）
-- [ ] 移动端适配
 - [ ] 编辑模式下的块级定位（现在搜索总是开阅读视图；编辑器 DOM 未带 `data-node-id`）
 
 ## 已知坑（都是踩过的）

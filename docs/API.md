@@ -79,18 +79,26 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `api/session` | `{version,prefix,user:{uid,name,isAdmin,local},needsSetup,locked,hasLibrary,stats?}`；前端据此决定先显示「设 PIN」屏、「解锁」屏还是主界面 |
+| GET | `api/session` | `{version,prefix,user:{uid,name,isAdmin,local},needsSetup,locked,hasLibrary,stats?,sessions?,sessionExpiresAt?}`；前端据此决定先显示「设 PIN」屏、「解锁」屏还是主界面；解锁后额外给 `sessions`（该账号当前有效会话数，含本机）与 `sessionExpiresAt`（本机这枚令牌的到期时间，RFC3339/UTC） |
 | POST | `api/pin/setup` | `{pin:"6 位数字"}` → `{ok,onboarded,weak}`，同时下发会话 Cookie；仅在该用户从未设过 PIN 时可用 |
 | POST | `api/pin/unlock` | `{pin}` → `{ok,weak}`；错码 → 401，响应里带剩余次数 |
 | POST | `api/pin/lock` | `{}` → `{ok,locked:true}`（已解锁时用） |
-| POST | `api/pin/change` | `{old,new}` → `{ok,weak}`；`weak:true` 指新 PIN 命中弱口令表（仍可设置，前端只给提示） |
+| POST | `api/pin/change` | `{old,new}` → `{ok,weak}`；`weak:true` 指新 PIN 命中弱口令表（仍可设置，前端只给提示）。改完该账号的**其它会话全部作废**，本机换一枚新令牌继续用 |
+| POST | `api/pin/revoke` | `{}` → `{ok,revoked:n,sessions:1}`；作废该账号其它设备上的解锁（`revoked` 不含本机），本机换新令牌。「手机丢了」用这个 |
 
 会话：`ztnote_session` Cookie（HttpOnly、SameSite=Lax、Path=`<prefix>/`、30 天），值是服务端随机令牌，
 绑定 uid——同一个浏览器换了网关注入的 uid，令牌也不认。
 
-PIN 存储：`users/<uid>/pin.json`——PBKDF2-HMAC-SHA256（10 万次迭代）+ 每用户随机盐，只存 salt 与 hash；
-连续错 5 次锁 30 秒（按 uid 计数）。PIN 是「防旁人随手翻看」的门，不是加密：磁盘上仍是明文 `.sy`
+PIN 存储：`users/<uid>/pin.json`——PBKDF2-HMAC-SHA256（12 万次迭代）+ 每用户随机盐，只存 salt 与 hash；
+连续输错逐级锁定（第 5 次起 1 分钟、第 10 次起 5 分钟、第 15 次起 15 分钟，按 uid 计数）。PIN 是「防旁人随手翻看」的门，不是加密：磁盘上仍是明文 `.sy`
 （要抗物理访问得靠卷加密）。
+
+**忘了 PIN**：删掉 `users/<uid>/pin.json`（笔记与图片都在 `workspace/`，不受影响），刷新即可重设。
+飞牛上该目录属应用用户，用「文件管理器」或以管理员身份处理。
+
+**闲置自动锁定**是前端行为（时长存在浏览器 `localStorage.zt.autolock.minutes`，默认 30 分钟，可选
+15/30/60/180 分钟或「永不」）：到点前端调 `api/pin/lock` 丢掉会话、回到 PIN 屏。服务端另外有一道
+30 天不活动的兜底（见上）。
 
 首次解锁（`setup`）时自动建《我的笔记》与一篇欢迎文档。
 

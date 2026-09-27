@@ -11,6 +11,8 @@ import {
   type Route,
 } from './router'
 import { store, docTitle } from './store'
+import { createAutoLock, readAutoLockMinutes } from './autolock'
+import { openSecurityDialog } from './views/security'
 import { createTreeView, type TreeHandle } from './views/tree'
 import { createTopbar, type TopbarHandle } from './views/topbar'
 import { mountDoc, type ViewHandle } from './views/doc'
@@ -115,6 +117,12 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     await tree?.reload()
     topbar?.refresh()
   }
+
+  /* ---- 闲置自动锁定：多久没动就回 PIN 屏（时长按设备存在 localStorage） ---- */
+  const autoLock = createAutoLock({
+    minutes: readAutoLockMinutes,
+    onLock: () => void lockNow('idle'),
+  })
 
   /* ---------------- 全局动作 ---------------- */
 
@@ -294,9 +302,18 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     onGoHome: () => navigate({ name: 'home' }),
     session,
     onLock: () => void lockNow(),
+    onSecurity: () =>
+      void openSecurityDialog({
+        session,
+        onLock: () => void lockNow(),
+        onAutoLockChange: () => autoLock.touch(),
+      }),
   })
 
-  async function lockNow(): Promise<void> {
+  /** reason=idle 是闲置自动锁定（给一句提示，免得用户以为被踢了） */
+  async function lockNow(reason: 'user' | 'idle' = 'user'): Promise<void> {
+    autoLock.stop()
+    if (reason === 'idle') toast('闲置太久，已自动上锁', 'info', 4000)
     try {
       await api.pinLock()
     } catch {
@@ -339,6 +356,7 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
 
   store.selection = selectionOf(parseHash(location.hash))
   topbar.refresh()
+  autoLock.start()
   void loadHealth()
   void refreshTree()
 
@@ -349,6 +367,7 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
   void render(parseHash(location.hash))
 
   return () => {
+    autoLock.stop()
     stopRouter()
     current?.destroy()
     current = null

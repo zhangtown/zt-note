@@ -123,6 +123,29 @@ func (s *Server) handlePinChange(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]any{"weak": WeakPIN(body.New), "onboarded": onboarded, "user": userJSON(id)})
 }
 
+// handlePinRevoke 撤销其它设备上的解锁（当前设备换一枚新会话继续用）。
+//
+// 用于「手机丢了 / 在别人电脑上忘了锁」这类场景：全部会话作废，只留发出请求的这个。
+func (s *Server) handlePinRevoke(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "只支持 POST")
+		return
+	}
+	id := identity(r)
+	if !s.Sessions.Lookup(sessionToken(r), id.UID) {
+		fail(w, http.StatusUnauthorized, "locked")
+		return
+	}
+	dropped := s.Sessions.DropUser(id.UID)
+	onboarded := s.grant(w, r, id)
+	// dropped 里含发出请求的这枚令牌，所以「其它设备」= dropped-1
+	revoked := dropped - 1
+	if revoked < 0 {
+		revoked = 0
+	}
+	ok(w, map[string]any{"revoked": revoked, "sessions": 1, "onboarded": onboarded, "user": userJSON(id)})
+}
+
 // grant 给当前身份发一枚会话 Cookie，并处理「第一次进入」的建库。
 // 建库失败只记日志（前端随后调用数据接口时会看到具体错误）。
 func (s *Server) grant(w http.ResponseWriter, r *http.Request, id users.Identity) bool {

@@ -195,6 +195,21 @@ async function postJson(url, body) {
   return r
 }
 
+/**
+ * 不碰共享 Cookie 罐的一次解锁：用于模拟「另一台设备」。
+ * 返回 { ok, status, token }，token 可单独拿去发请求验证它是否已被作废。
+ */
+async function rawUnlock(pin) {
+  const res = await fetch(`${API}/pin/unlock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ pin }),
+  })
+  const list = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [res.headers.get('set-cookie') ?? '']
+  const m = /ztnote_session=([^;]*)/.exec(list.join('; '))
+  return { ok: res.ok, status: res.status, token: m ? m[1] : '' }
+}
+
 async function probeHealth() {
   try {
     const res = await fetch(`${BASE}${PREFIX}/api/health`, { headers: { Accept: 'application/json' } })
@@ -1114,6 +1129,23 @@ async function main() {
     check('2b-PIN', `api/pin/change 改回 ${TEST_PIN}`, backChange.status === 200 && backChange.data?.weak === false, clip(backChange.data ?? backChange.text, 160))
     const badOld = await postJson(`${API}/pin/change`, { old: '999999', new: TEST_PIN })
     check('2b-PIN', 'api/pin/change 原 PIN 错误 → 401', badOld.status === 401, `status=${badOld.status}`)
+
+    // 会话计数 / 到期时间 / 撤销其它设备
+    const sess1 = await getJson(`${API}/session`)
+    check('2b-PIN', 'api/session 报会话数（改 PIN 后只剩本机 1 处）', sess1.sessions === 1, `sessions=${sess1.sessions}`)
+    const expDays = (Date.parse(sess1.sessionExpiresAt ?? '') - Date.now()) / 86400000
+    check('2b-PIN', 'api/session 给出本次解锁到期时间（约 30 天后）', expDays > 29 && expDays < 30.1, `expires=${sess1.sessionExpiresAt} 约 ${expDays.toFixed(2)} 天`)
+
+    const extra = await rawUnlock(TEST_PIN)
+    check('2b-PIN', 'API 模拟第二台设备解锁（第二枚令牌）', extra.ok === true && extra.token.length > 10, `status=${extra.status} token=${extra.token.slice(0, 10)}…`)
+    const sess2 = await getJson(`${API}/session`)
+    check('2b-PIN', '两处解锁时 api/session 报 sessions=2', sess2.sessions === 2, `sessions=${sess2.sessions}`)
+    const revoke = await postJson(`${API}/pin/revoke`, {})
+    check('2b-PIN', 'POST api/pin/revoke 撤销其它设备（revoked=1）', revoke.status === 200 && revoke.data?.revoked === 1 && revoke.data?.sessions === 1, clip(revoke.data ?? revoke.text, 160))
+    const dead = await fetch(`${API}/tree`, { headers: { Accept: 'application/json', Cookie: `ztnote_session=${extra.token}` } })
+    check('2b-PIN', '被撤销的令牌再访问 api/tree → 401', dead.status === 401, `status=${dead.status}`)
+    const sess3 = await getJson(`${API}/session`)
+    check('2b-PIN', '撤销后本机仍解锁（sessions=1、locked=false）', sess3.sessions === 1 && sess3.locked === false, `sessions=${sess3.sessions} locked=${sess3.locked}`)
   } catch (err) {
     check('2b-PIN', 'PIN 链路执行', false, err instanceof Error ? err.message : String(err))
     ctx.fatal = 'PIN 链路'
@@ -1387,6 +1419,83 @@ async function main() {
   check('3-树', `文档树渲染 ${EXPECT_BOXES} 个笔记本且含 笔记本A / 示例笔记本 / ${WELCOME_BOX}`, pageInfo.notebooks.length === EXPECT_BOXES && pageInfo.notebooks.includes('笔记本A') && pageInfo.notebooks.includes('示例笔记本') && pageInfo.notebooks.includes(WELCOME_BOX), JSON.stringify(pageInfo.notebooks))
   check('3-树', `笔记本展开后渲染 ${EXPECT_DOCS} 个文档条目且含《${DOC_TITLE}》（含首次进入的欢迎文档）`, pageInfo.docs.length === EXPECT_DOCS && pageInfo.docs.includes(DOC_TITLE), `${pageInfo.docs.length} 条：${pageInfo.docs.slice(0, 14).join('、')}`)
   await cdp.screenshot('01-home')
+
+  /* --- 3b. PIN 与安全面板：状态 / 自动锁定 / 撤销其它设备 / 重置指引 --- */
+  log('\n[3b] PIN 与安全面板')
+  await cdp.evalJs(`(() => { document.querySelector('.btn.who')?.click(); return true })()`)
+  await cdp.waitFor(`!!document.querySelector('.menu .menu-item')`, 4000, '用户菜单展开')
+  const menuText = await cdp.evalJs(`(document.querySelector('.btn.who')?.parentElement?.querySelector('.menu')?.textContent || '').replace(/\\s+/g, ' ')`)
+  check('3b-PIN管理', '用户菜单有「PIN 与安全…」入口且提示当前自动锁定时长', /PIN 与安全/.test(menuText) && /自动锁定/.test(menuText), clip(menuText, 180))
+  await cdp.clickElement(byText('.menu-item-label', 'PIN 与安全…'), '菜单项「PIN 与安全…」')
+  await cdp.waitFor(`!!document.querySelector('.modal .sec')`, 5000, 'PIN 与安全面板出现')
+  const sec0 = await cdp.evalJs(`(() => {
+    const box = document.querySelector('.sec')
+    const sel = document.querySelector('.sec-select')
+    const path = document.querySelector('.path-input')
+    const help = document.querySelector('.sec-help')
+    return {
+      text: (box?.textContent || '').replace(/\\s+/g, ' ').slice(0, 420),
+      options: Array.from(sel?.options ?? []).map((o) => o.value),
+      minutes: sel?.value ?? '',
+      path: path?.value ?? '',
+      helpOpen: help ? help.open : null,
+    }
+  })()`)
+  check('3b-PIN管理', '面板显示身份 / 本次解锁到期 / 已解锁设备', /身份/.test(sec0.text) && /本次解锁/.test(sec0.text) && /已解锁设备/.test(sec0.text), clip(sec0.text, 240))
+  check(
+    '3b-PIN管理',
+    `自动锁定时长可选（当前 ${sec0.minutes}，${sec0.options.length} 档含「永不」）`,
+    sec0.options.includes('15') && sec0.options.includes('180') && sec0.options.includes('0') && sec0.minutes === '30',
+    `value=${sec0.minutes} options=${JSON.stringify(sec0.options)}`,
+  )
+  check('3b-PIN管理', '重置指引给出真实路径 users/<uid>/pin.json', /(^|\/)users\/[^/]+\/pin\.json$/.test(sec0.path.replace(/\\/g, '/')), clip(sec0.path, 200))
+  check('3b-PIN管理', '「忘记 PIN」说明默认折叠', sec0.helpOpen === false, `open=${sec0.helpOpen}`)
+  await cdp.screenshot('01b-security')
+
+  // 改设置 → 立即落 localStorage；菜单提示也跟着变
+  await cdp.evalJs(`(() => { const s = document.querySelector('.sec-select'); s.value = '15'; s.dispatchEvent(new Event('change', { bubbles: true })); return s.value })()`)
+  const stored15 = await cdp.evalJs(`localStorage.getItem('zt.autolock.minutes')`)
+  check('3b-PIN管理', '选「15 分钟」→ localStorage zt.autolock.minutes=15', stored15 === '15', `localStorage=${stored15}`)
+  await cdp.evalJs(`(() => { const s = document.querySelector('.sec-select'); s.value = '30'; s.dispatchEvent(new Event('change', { bubbles: true })); return s.value })()`)
+  const stored30 = await cdp.evalJs(`localStorage.getItem('zt.autolock.minutes')`)
+  check('3b-PIN管理', '改回「30 分钟」并落盘', stored30 === '30', `localStorage=${stored30}`)
+
+  // 撤销其它设备：e2e 脚本那枚令牌应被作废，浏览器这份保留
+  const beforeRevoke = await cdp.evalJs(`fetch('api/session').then((r) => r.json()).then((d) => d.sessions).catch(() => -1)`)
+  check('3b-PIN管理', '点撤销前会话数 ≥2（浏览器 + e2e 脚本）', typeof beforeRevoke === 'number' && beforeRevoke >= 2, `sessions=${beforeRevoke}`)
+  await cdp.clickElement(byText('.sec-actions button', '撤销其它设备'), '按钮「撤销其它设备」')
+  await cdp.waitFor(`document.querySelectorAll('.modal-mask').length >= 2`, 4000, '撤销确认弹窗出现')
+  await cdp.evalJs(`(() => {
+    const masks = document.querySelectorAll('.modal-mask')
+    const btn = masks[masks.length - 1]?.querySelector('.modal-actions .btn.primary')
+    if (!btn) return false
+    btn.click()
+    return true
+  })()`)
+  const toastOk = await cdp
+    .waitFor(`Array.from(document.querySelectorAll('.toast')).some((n) => /已撤销/.test(n.textContent || ''))`, 5000, '撤销成功提示')
+    .then(() => true)
+    .catch(() => false)
+  check('3b-PIN管理', '撤销后提示「已撤销 N 处解锁」', toastOk, toastOk ? 'toast 命中' : '未见提示')
+  const sec1 = await cdp.evalJs(`(document.querySelector('.sec-status')?.textContent || '').replace(/\\s+/g, ' ').slice(0, 300)`)
+  check('3b-PIN管理', '面板状态回到「仅本机」', /仅本机/.test(sec1), clip(sec1, 200))
+  const jarDead = await httpJson(`${API}/tree`)
+  check('3b-PIN管理', '被撤销的那枚令牌（e2e 脚本）→ 401', jarDead.status === 401, `status=${jarDead.status}`)
+
+  // 面板关掉，菜单提示应反映新设置；顺便把脚本自己的会话补回来
+  await cdp.evalJs(`(() => {
+    const masks = document.querySelectorAll('.modal-mask')
+    masks[masks.length - 1]?.querySelector('.modal-actions button')?.click()
+    return true
+  })()`)
+  await cdp.waitFor(`!document.querySelector('.modal-mask')`, 4000, '面板关闭')
+  const menuAgain = await cdp.evalJs(`(() => { document.querySelector('.btn.who')?.click(); return (document.querySelector('.btn.who')?.parentElement?.querySelector('.menu')?.textContent || '').replace(/\\s+/g, ' ') })()`)
+  check('3b-PIN管理', '菜单提示随设置更新（闲置 30 分钟）', /30 分钟/.test(menuAgain), clip(menuAgain, 160))
+  await cdp.evalJs(`document.querySelector('.btn.who')?.click()`)
+  const relogin = await rawUnlock(TEST_PIN)
+  if (relogin.token) COOKIE = `ztnote_session=${relogin.token}`
+  const jarBack = await getJson(`${API}/tree`)
+  check('3b-PIN管理', '脚本重新解锁后接口恢复（后续步骤继续可用）', Array.isArray(jarBack.notebooks), `notebooks=${(jarBack.notebooks ?? []).length}`)
 
   /* --- 4. 点击《示例文档》查看正文 --- */
   log('\n[4] 点击文档树打开《示例文档》')

@@ -367,15 +367,46 @@ func (m *SessionManager) Drop(token string) {
 	delete(m.sessions, token)
 }
 
-// DropUser 注销某用户的全部会话（改 PIN 时用）。
-func (m *SessionManager) DropUser(uid string) {
+// DropUser 注销某用户的全部会话（改 PIN / 撤销其它设备时用），返回注销掉的数量。
+func (m *SessionManager) DropUser(uid string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	n := 0
 	for t, s := range m.sessions {
 		if s.uid == uid {
 			delete(m.sessions, t)
+			n++
 		}
 	}
+	return n
+}
+
+// CountFor 返回该用户当前还有几枚有效会话（含发起查询的这枚）。
+func (m *SessionManager) CountFor(uid string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	n := 0
+	for _, s := range m.sessions {
+		if s.uid == uid && now.Before(s.expires) {
+			n++
+		}
+	}
+	return n
+}
+
+// Expires 查令牌的到期时间（只读，不续期）；令牌无效或不属于该用户时 ok=false。
+func (m *SessionManager) Expires(token, uid string) (time.Time, bool) {
+	if token == "" {
+		return time.Time{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[token]
+	if s == nil || s.uid != uid || m.now().After(s.expires) {
+		return time.Time{}, false
+	}
+	return s.expires, true
 }
 
 func (m *SessionManager) pruneLocked() {

@@ -119,6 +119,8 @@ export const api = {
   pinLock: () => apiPost<{ locked: boolean }>('api/pin/lock'),
   pinChange: (oldPin: string, newPin: string) =>
     apiPost<import('./types').PinResp>('api/pin/change', { old: oldPin, new: newPin }),
+  /** 撤销其它设备上的解锁（本机换一枚新会话继续用） */
+  pinRevoke: () => apiPost<import('./types').PinResp>('api/pin/revoke'),
   tree: () => apiGet<{ notebooks: import('./types').Notebook[] }>('api/tree'),
   doc: (box: string, id: string) =>
     apiGet<import('./types').DocResp>(`api/doc?box=${encodeURIComponent(box)}&id=${encodeURIComponent(id)}`),

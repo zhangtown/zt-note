@@ -2,7 +2,7 @@
 import { store } from '../store'
 import { h, toast } from '../dom'
 import type { CurrentSelection, SessionResp } from '../types'
-import { openPinChangeDialog } from './gate'
+import { autoLockLabel, readAutoLockMinutes } from '../autolock'
 
 export interface TopbarCtx {
   onNewNotebook: () => void
@@ -17,6 +17,8 @@ export interface TopbarCtx {
   session: SessionResp
   /** 锁定：丢掉会话，回到 PIN 屏 */
   onLock: () => void
+  /** 打开「PIN 与安全」面板（改 PIN / 自动锁定 / 撤销其它设备 / 重置指引） */
+  onSecurity: () => void
 }
 
 export interface TopbarHandle {
@@ -160,13 +162,18 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
       'div',
       { class: 'menu-info' },
       h('div', {}, `身份：${whoName}`),
-      h('div', { class: 'menu-info-sub' }, `uid ${ctx.session.user.uid} · 每个账号的笔记互相独立`),
+      h(
+        'div',
+        { class: 'menu-info-sub' },
+        `uid ${ctx.session.user.uid} · 每个账号的笔记互相独立`,
+        (ctx.session.sessions ?? 1) > 1 ? ` · 已解锁 ${ctx.session.sessions} 处` : '',
+      ),
     )
     const items = [
       {
-        label: '修改 PIN',
-        sub: '原 PIN + 新 PIN',
-        run: () => void openPinChangeDialog(),
+        label: 'PIN 与安全…',
+        sub: `改 PIN / 自动锁定（闲置 ${autoLockLabel(readAutoLockMinutes())}）`,
+        run: () => ctx.onSecurity(),
       },
       {
         label: '锁定',

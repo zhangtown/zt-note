@@ -293,7 +293,7 @@ func TestHTTPPinGate(t *testing.T) {
 	}
 
 	// 1. 未解锁：数据接口 401，标题/图片都不下发
-	for _, p := range []string{"/api/tree", "/api/search?q=%E4%B8%80", "/assets/none.png", "/api/export/siyuan?box=all", "/api/pin/change"} {
+	for _, p := range []string{"/api/tree", "/api/search?q=%E4%B8%80", "/assets/none.png", "/api/export/siyuan?box=all", "/api/pin/change", "/api/pin/revoke"} {
 		resp, _, raw := do(http.MethodGet, p, "", "", nil)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("未解锁访问 %s：status=%d body=%s，期望 401", p, resp.StatusCode, clipForTest(raw))
@@ -443,6 +443,168 @@ func TestHTTPPinGate(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dataRoot, "users", uid, "workspace", "data")); err != nil {
 			t.Errorf("uid %s 的工作区不存在: %v", uid, err)
 		}
+	}
+}
+
+// TestSessionCountAndExpiry 卡住「会话计数 / 到期时间 / 批量注销」的语义：
+// PIN 管理页要显示「本账号还有几处已解锁」和「本次解锁什么时候到期」。
+func TestSessionCountAndExpiry(t *testing.T) {
+	m, _ := newTestManager(t)
+	if err := m.SetPIN("1000", "135790"); err != nil {
+		t.Fatal(err)
+	}
+	a1, a2, b1 := m.Create("1000"), m.Create("1000"), m.Create("2000")
+	if a1 == "" || a2 == "" || b1 == "" {
+		t.Fatal("Create 应返回非空令牌")
+	}
+	if n := m.CountFor("1000"); n != 2 {
+		t.Errorf("CountFor(1000) = %d，期望 2", n)
+	}
+	if n := m.CountFor("2000"); n != 1 {
+		t.Errorf("CountFor(2000) = %d，期望 1", n)
+	}
+	if n := m.CountFor("9999"); n != 0 {
+		t.Errorf("CountFor(9999) = %d，期望 0", n)
+	}
+	if _, ok := m.Expires(a1, "1000"); !ok {
+		t.Error("Expires 应认得本用户的令牌")
+	}
+	if _, ok := m.Expires(a1, "2000"); ok {
+		t.Error("Expires 不该把别人的令牌算给 2000")
+	}
+	if _, ok := m.Expires("nope", "1000"); ok {
+		t.Error("Expires 对无效令牌应返回 false")
+	}
+	exp, _ := m.Expires(a1, "1000")
+	if d := time.Until(exp); d < sessionTTL-2*time.Minute || d > sessionTTL {
+		t.Errorf("到期时间应在 %v 量级，得到 %v", sessionTTL, d)
+	}
+	if n := m.DropUser("1000"); n != 2 {
+		t.Errorf("DropUser 应注销 2 枚会话，得到 %d", n)
+	}
+	if n := m.CountFor("1000"); n != 0 {
+		t.Errorf("DropUser 后 CountFor = %d，期望 0", n)
+	}
+	if m.Lookup(a1, "1000") || m.Lookup(a2, "1000") {
+		t.Error("DropUser 后本用户令牌都应失效")
+	}
+	if !m.Lookup(b1, "2000") {
+		t.Error("DropUser 不该影响别的用户")
+	}
+	if n := m.DropUser("9999"); n != 0 {
+		t.Errorf("没会话的用户 DropUser 应得 0，得到 %d", n)
+	}
+}
+
+// TestHTTPPinRevoke 走真实 HTTP：两台设备各解锁一次，其中一台「撤销其它设备」后
+// 只剩发出请求的那台还能用，且会话数回到 1。
+func TestHTTPPinRevoke(t *testing.T) {
+	dataRoot := t.TempDir()
+	srv := New(dataRoot, "", "test", log.New(io.Discard, "", 0))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	do := func(method, path string, body string, cookie *http.Cookie) (*http.Response, map[string]any, []byte) {
+		t.Helper()
+		var rdr io.Reader
+		if body != "" {
+			rdr = strings.NewReader(body)
+		}
+		req, err := http.NewRequest(method, ts.URL+path, rdr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("X-Trim-Userid", "1000")
+		req.Header.Set("X-Trim-Username", "zhangtown")
+		req.Header.Set("X-Trim-Isadmin", "true")
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		rec := map[string]any{}
+		_ = json.Unmarshal(raw, &rec)
+		return resp, rec, raw
+	}
+	sessionCookieOf := func(resp *http.Response) *http.Cookie {
+		for _, c := range resp.Cookies() {
+			if c.Name == cookieName {
+				return c
+			}
+		}
+		return nil
+	}
+
+	const pin = "135790"
+	// 设备 A：设置 PIN（同时拿到会话）
+	resp, _, raw := do(http.MethodPost, "/api/pin/setup", `{"pin":"`+pin+`"}`, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("设置 PIN 失败: %d %s", resp.StatusCode, clipForTest(raw))
+	}
+	ckA := sessionCookieOf(resp)
+	if ckA == nil {
+		t.Fatal("设置 PIN 后应下发会话 Cookie")
+	}
+	// 设备 B：解锁
+	resp, _, raw = do(http.MethodPost, "/api/pin/unlock", `{"pin":"`+pin+`"}`, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("设备 B 解锁失败: %d %s", resp.StatusCode, clipForTest(raw))
+	}
+	ckB := sessionCookieOf(resp)
+
+	// 两台设备都能读数据，会话数为 2，且能问到到期时间
+	for name, ck := range map[string]*http.Cookie{"A": ckA, "B": ckB} {
+		if resp, _, raw := do(http.MethodGet, "/api/tree", "", ck); resp.StatusCode != 200 {
+			t.Fatalf("设备 %s 读 /api/tree: %d %s", name, resp.StatusCode, clipForTest(raw))
+		}
+	}
+	_, rec, _ := do(http.MethodGet, "/api/session", "", ckA)
+	if n, _ := rec["sessions"].(float64); int(n) != 2 {
+		t.Errorf("/api/session 的 sessions = %v，期望 2", rec["sessions"])
+	}
+	if s, _ := rec["sessionExpiresAt"].(string); s == "" {
+		t.Error("/api/session 应带上本次解锁的到期时间")
+	} else if _, err := time.Parse(time.RFC3339, s); err != nil {
+		t.Errorf("到期时间应是 RFC3339，得到 %q", s)
+	}
+
+	// A 撤销其它设备：只该作废 B
+	resp, rec, raw = do(http.MethodPost, "/api/pin/revoke", "", ckA)
+	if resp.StatusCode != 200 {
+		t.Fatalf("撤销失败: %d %s", resp.StatusCode, clipForTest(raw))
+	}
+	if n, _ := rec["revoked"].(float64); int(n) != 1 {
+		t.Errorf("revoked = %v，期望 1（只作废 B）", rec["revoked"])
+	}
+	ckA2 := sessionCookieOf(resp)
+	if ckA2 == nil {
+		t.Fatal("撤销后当前设备应换到新会话")
+	}
+	if resp, _, _ := do(http.MethodGet, "/api/tree", "", ckB); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("B 的会话应作废，得到 %d", resp.StatusCode)
+	}
+	if resp, _, _ := do(http.MethodGet, "/api/tree", "", ckA); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("A 的旧会话也该作废（换了新令牌），得到 %d", resp.StatusCode)
+	}
+	if resp, _, raw := do(http.MethodGet, "/api/tree", "", ckA2); resp.StatusCode != 200 {
+		t.Errorf("A 的新会话应可用: %d %s", resp.StatusCode, clipForTest(raw))
+	}
+	_, rec, _ = do(http.MethodGet, "/api/session", "", ckA2)
+	if n, _ := rec["sessions"].(float64); int(n) != 1 {
+		t.Errorf("撤销后 sessions = %v，期望 1", rec["sessions"])
+	}
+
+	// 再撤销一次：没有其它设备可撤，也应正常
+	_, rec, _ = do(http.MethodPost, "/api/pin/revoke", "", ckA2)
+	if n, _ := rec["revoked"].(float64); int(n) != 0 {
+		t.Errorf("没有其它设备时 revoked = %v，期望 0", rec["revoked"])
 	}
 }
 

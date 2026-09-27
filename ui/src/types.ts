@@ -35,6 +35,10 @@ export interface SessionResp {
   hasLibrary: boolean
   dataDir?: string
   stats?: Stats
+  /** 该账号当前有几枚有效会话（含本机） */
+  sessions?: number
+  /** 本次解锁的到期时间（RFC3339，UTC） */
+  sessionExpiresAt?: string
 }
 
 export interface Stats {
@@ -51,6 +55,10 @@ export interface PinResp {
   onboarded?: boolean
   weak?: boolean
   locked?: boolean
+  /** 撤销其它设备时被作废的会话数（不含本机） */
+  revoked?: number
+  /** 撤销后本账号剩下的会话数 */
+  sessions?: number
 }
 
 export interface DocNode {
