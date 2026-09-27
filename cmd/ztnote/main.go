@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"ztnote/internal/server"
-	"ztnote/internal/store"
+	"ztnote/internal/users"
 )
 
 // version 由构建脚本注入：-ldflags "-X main.version=..."
@@ -28,11 +28,12 @@ var version = "0.1.0-dev"
 
 func main() {
 	var (
-		workspace = flag.String("workspace", "", "工作区目录（内含 data/）。默认 $TRIM_PKGVAR/workspace")
-		addr      = flag.String("addr", "", "TCP 监听地址（开发用），如 127.0.0.1:8765")
-		sock      = flag.String("sock", "", "Unix socket 路径。默认 $TRIM_APPDEST/app.sock")
-		prefix    = flag.String("prefix", "", "URL 前缀。默认 $GATEWAY_PREFIX 或 /app/zt-note")
-		showVer   = flag.Bool("version", false, "打印版本号")
+		dataDir     = flag.String("data", "", "数据根目录（内含 users/<uid>/workspace）。默认 $TRIM_PKGVAR")
+		legacyOwner = flag.String("legacy-owner", "", "把旧的单用户 workspace 迁给这个 uid。默认 $ZTNOTE_LEGACY_OWNER 或 1000")
+		addr        = flag.String("addr", "", "TCP 监听地址（开发用），如 127.0.0.1:8765")
+		sock        = flag.String("sock", "", "Unix socket 路径。默认 $TRIM_APPDEST/app.sock")
+		prefix      = flag.String("prefix", "", "URL 前缀。默认 $GATEWAY_PREFIX 或 /app/zt-note")
+		showVer     = flag.Bool("version", false, "打印版本号")
 	)
 	flag.Parse()
 
@@ -43,21 +44,26 @@ func main() {
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 
-	// ---- 工作区
-	ws := firstNonEmpty(*workspace, os.Getenv("ZTNOTE_WORKSPACE"))
-	if ws == "" {
+	// ---- 数据根：每个用户一份工作区
+	root := firstNonEmpty(*dataDir, os.Getenv("ZTNOTE_DATA"), os.Getenv("ZTNOTE_WORKSPACE"))
+	if root == "" {
 		if v := os.Getenv("TRIM_PKGVAR"); v != "" {
-			ws = filepath.Join(v, "workspace")
+			root = v
 		} else {
-			ws = "workspace"
+			root = "data"
 		}
 	}
-	if abs, err := filepath.Abs(ws); err == nil {
-		ws = abs
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
 	}
-	st := store.New(ws)
-	if err := st.Ensure(); err != nil {
-		logger.Fatalf("初始化工作区失败: %v", err)
+	dataRoot := users.NewRoot(root)
+
+	// 旧版只有一份 workspace：升级时迁给 owner（默认 1000，飞牛第一个管理员）
+	owner := firstNonEmpty(*legacyOwner, os.Getenv("ZTNOTE_LEGACY_OWNER"), "1000")
+	if moved, err := dataRoot.MigrateLegacy(owner); err != nil {
+		logger.Printf("旧数据迁移失败: %v", err)
+	} else if moved {
+		logger.Printf("已把旧的单用户工作区迁给 uid %s → %s", owner, dataRoot.Workspace(owner))
 	}
 
 	// ---- 前缀
@@ -67,7 +73,7 @@ func main() {
 	}
 	pfx = strings.TrimSuffix(pfx, "/")
 
-	srv := server.New(st, pfx, version, logger)
+	srv := server.New(root, pfx, version, logger)
 
 	// ---- 监听
 	var listeners []net.Listener
@@ -104,10 +110,10 @@ func main() {
 		logger.Fatalf("没有可用的监听地址")
 	}
 
-	logger.Printf("zt-note %s 启动，工作区 %s，URL 前缀 %s", version, ws, pfx)
-	stats := st.Stat()
-	logger.Printf("数据统计: %d 个笔记本 / %d 篇文档 / %d 个块 / %d 字符 / %d 个资源",
-		stats.Notebooks, stats.Docs, stats.Blocks, stats.Chars, stats.Assets)
+	logger.Printf("zt-note %s 启动，数据根 %s，URL 前缀 %s", version, root, pfx)
+	if list := dataRoot.List(); len(list) > 0 {
+		logger.Printf("已启用用户: %s", strings.Join(list, ", "))
+	}
 
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),

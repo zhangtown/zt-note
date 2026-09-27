@@ -38,6 +38,10 @@ const ROOT = resolve(here, '..', '..')
 const TEST = join(ROOT, '.test')
 const EXE = join(TEST, 'ztnote.exe')
 const WS = join(TEST, 'uiws')
+// 应用侧改成「一人一份工作区」：数据根 .test/uiws/users/<uid>/workspace。
+// 不带网关身份头时身份是 local，所以磁盘校验都指向 USER_WS。
+const USER = 'local'
+const USER_WS = join(WS, 'users', USER, 'workspace')
 const SHOTS = join(TEST, 'e2e-live-shots')
 const SERVER_LOG = join(TEST, 'e2e-live-server.log')
 const REPORT = join(ROOT, 'ui', 'E2E-LIVE-REPORT.md')
@@ -76,6 +80,11 @@ const MIME = {
 
 const SIYUAN_DATA = 'C:/Users/USER/Documents/kimi/Workspaces/示例工作区/data'
 const EXPECT_STATS = { notebooks: 2, docs: 12, blocks: 227, assets: 22 }
+// 第一次进入会白送一个「我的笔记」+ 一篇欢迎文档，盘点时要算进去
+const WELCOME_BOX = '我的笔记'
+const EXPECT_BOXES = EXPECT_STATS.notebooks + 1
+const EXPECT_DOCS = EXPECT_STATS.docs + 1
+const TEST_PIN = '135790'
 const DOC_TITLE = '示例文档'
 const READ_TEXT = ['正文片段', '示例数值']
 
@@ -138,8 +147,29 @@ function warn(msg) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// 会话 Cookie：PIN 解锁后后端发一枚 HttpOnly Cookie，后续请求必须带上。
+// 这里手动维护，好处是能顺便验证「不带 Cookie 就是 401」。
+let COOKIE = ''
+
+function withCookie(init = {}) {
+  const headers = { ...(init.headers ?? {}) }
+  if (COOKIE) headers.Cookie = COOKIE
+  return { ...init, headers }
+}
+
+function captureCookie(res) {
+  const list = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : []
+  const raw = list.length ? list : [res.headers.get('set-cookie') ?? '']
+  for (const c of raw) {
+    const m = /(ztnote_session=[^;]*)/.exec(c)
+    if (!m) continue
+    COOKIE = /Max-Age=0|Expires=Thu, 01 Jan 1970/i.test(c) ? '' : m[1]
+  }
+}
+
 async function httpJson(url, init) {
-  const res = await fetch(url, init)
+  const res = await fetch(url, withCookie(init))
+  captureCookie(res)
   const text = await res.text()
   let data = null
   try {
@@ -255,7 +285,7 @@ async function startServer() {
   if (busy) throw new Error(`端口 ${PORT} 已被占用（health: ${JSON.stringify(busy).slice(0, 200)}），请先停止该进程`)
 
   const fd = openSync(SERVER_LOG, 'w')
-  serverProc = spawn(EXE, ['-workspace', WS, '-addr', `${HOST}:${PORT}`, '-prefix', PREFIX], {
+  serverProc = spawn(EXE, ['-data', WS, '-addr', `${HOST}:${PORT}`, '-prefix', PREFIX], {
     cwd: ROOT,
     stdio: ['ignore', fd, fd],
     windowsHide: true,
@@ -689,7 +719,7 @@ function arrayRawSpans(text, start) {
 }
 
 function readSy(box, id) {
-  const path = join(WS, 'data', box, `${id}.sy`)
+  const path = join(USER_WS, 'data', box, `${id}.sy`)
   const raw = readFileSync(path, 'utf8')
   const json = JSON.parse(raw)
   const start = findChildrenArray(raw)
@@ -758,7 +788,7 @@ function buildReport(ctx) {
   lines.push(`- 生成时间：${new Date().toISOString()}`)
   lines.push(`- 脚本：\`ui/scripts/e2e-live.mjs\`（运行产物在 \`.test/\`）`)
   lines.push(`- 页面地址：真实二进制 \`${APP_URL}\`（go:embed 产物，前缀模拟飞牛网关）${ctx.assetBug ? `（严格模式白屏，UI 断言实际跑在 \`${ctx.pageUrl}\`：仅静态文件代答、api/* 仍走真实后端）` : ''}`)
-  lines.push(`- 工作区：\`${WS}\`（每次运行重建；导入源：\`${SIYUAN_DATA}\`）`)
+  lines.push(`- 数据根：\`${WS}\`（每次运行重建；用户工作区 \`users/${USER}/workspace\`；导入源：\`${SIYUAN_DATA}\`）`)
   lines.push(`- 浏览器：\`${ctx.browser || '(未找到)'}\`；Node ${process.version}`)
   lines.push(`- 结果：**${pass} 通过 / ${fail} 失败 / ${skipped} 跳过**`)
   lines.push('')
@@ -972,7 +1002,7 @@ function buildReport(ctx) {
   lines.push('')
   lines.push('```')
   lines.push(`cwd = ${ROOT}`)
-  lines.push(`后端命令 = ${EXE} -workspace .test/uiws -addr ${HOST}:${PORT} -prefix ${PREFIX}`)
+  lines.push(`后端命令 = ${EXE} -data .test/uiws -addr ${HOST}:${PORT} -prefix ${PREFIX}`)
   lines.push(`health.prefix = ${JSON.stringify(ctx.healthPrefix)}`)
   lines.push(`health.frontend = ${JSON.stringify(ctx.healthFrontend)}（go:embed 产物可用）`)
   lines.push(`health.version = ${JSON.stringify(ctx.healthVersion)}`)
@@ -1021,6 +1051,75 @@ async function main() {
   check('2-服务', `-prefix 未被改写（health.prefix === "${PREFIX}"）`, health.prefix === PREFIX, `实际 prefix=${JSON.stringify(health.prefix)}`)
   check('2-服务', 'go:embed 前端产物可用（health.frontend=true）', health.frontend === true, `frontend=${JSON.stringify(health.frontend)}`)
 
+  /* --- 2b. PIN 门：未解锁时一律看不到数据 --- */
+  log('\n[2b] PIN 门：未设置 → 设置 → 锁定 → 解锁')
+  try {
+    const s0 = await getJson(`${API}/session`)
+    check('2b-PIN', 'GET api/session 未设 PIN 时 needsSetup=true 且 locked=true', s0.needsSetup === true && s0.locked === true, JSON.stringify({ needsSetup: s0.needsSetup, locked: s0.locked, uid: s0.user?.uid, hasLibrary: s0.hasLibrary }))
+    check('2b-PIN', 'session.user 带上了网关身份（本地开发是 local）', s0.user?.uid === USER, `uid=${JSON.stringify(s0.user?.uid)} name=${JSON.stringify(s0.user?.name)}`)
+
+    const lockedTree = await httpJson(`${API}/tree`)
+    check('2b-PIN', '未解锁时 GET api/tree → 401（不泄露标题）', lockedTree.status === 401, `status=${lockedTree.status} body=${clip(lockedTree.text, 120)}`)
+    const lockedAsset = await httpJson(`${API}/assets/nope.png`)
+    check('2b-PIN', '未解锁时 GET assets/* → 401（不泄露图片）', lockedAsset.status === 401, `status=${lockedAsset.status}`)
+
+    const badPin = await postJson(`${API}/pin/setup`, { pin: '123' })
+    check('2b-PIN', 'api/pin/setup 校验位数（123 → 400）', badPin.status === 400, `status=${badPin.status} body=${clip(badPin.text, 120)}`)
+
+    const setup = await postJson(`${API}/pin/setup`, { pin: TEST_PIN })
+    const setupOk = setup.status === 200 && setup.data?.ok === true && setup.data?.onboarded === true && setup.data?.weak === false
+    check('2b-PIN', `api/pin/setup 设置 PIN（${TEST_PIN}）并发会话 Cookie`, setupOk, clip(setup.data ?? setup.text, 200))
+    if (!setupOk) {
+      bug('设置 PIN 失败', 'POST api/pin/setup 未返回预期的 ok/onboarded/weak', `curl -s -X POST ${API}/pin/setup -H 'Content-Type: application/json' -d '{"pin":"${TEST_PIN}"}'`, 'HTTP 200 + {ok:true,onboarded:true,weak:false}', clip(setup.data ?? setup.text, 300), 'internal/server/pin.go handlePinSetup')
+      ctx.fatal = 'PIN 设置'
+      return
+    }
+    check('2b-PIN', 'Cookie 已拿到（后续请求自动带上）', COOKIE.startsWith('ztnote_session='), COOKIE ? '已捕获 ztnote_session' : '(空)')
+
+    // 首次进入白送的库与欢迎文档
+    const welcomeTree = await getJson(`${API}/tree`)
+    const welcomeBoxes = (welcomeTree.notebooks ?? []).map((nb) => nb.name)
+    check('2b-PIN', `首次进入自动建《${WELCOME_BOX}》`, welcomeBoxes.length === 1 && welcomeBoxes[0] === WELCOME_BOX, `notebooks=${JSON.stringify(welcomeBoxes)}`)
+    const welcomeDoc = (welcomeTree.notebooks?.[0]?.docs ?? [])[0]
+    check('2b-PIN', '自动建了一篇欢迎文档', Boolean(welcomeDoc), welcomeDoc ? `id=${welcomeDoc.id} title=${JSON.stringify(welcomeDoc.title)}` : '没找到')
+    if (welcomeDoc) {
+      const wd = await getJson(`${API}/doc?box=${welcomeTree.notebooks[0].id}&id=${welcomeDoc.id}`)
+      const hints = ['PIN', '导入', '导出', '数据']
+      const hit = hints.filter((t) => (wd.html ?? '').includes(t))
+      check('2b-PIN', `欢迎文档正文可读（含 ${hints.join('/')} 中的 ${hit.length} 个）`, hit.length >= 3, `blocks=${(wd.blocks ?? []).length} 命中=${JSON.stringify(hit)}`)
+    }
+    const welcomeStats = (await getJson(`${API}/session`)).stats ?? {}
+    ctx.welcomeStats = welcomeStats
+
+    // 换个身份（另一个 NAS 账号）不应该能看到别人的库
+    const otherId = await httpJson(`${API}/tree`, { headers: { 'X-Trim-Userid': '1001', 'X-Trim-Name': 'other', 'X-Trim-Isadmin': 'false' } })
+    check('2b-PIN', '另一个 NAS 账号（无 PIN 会话）→ 401，看不到 1000 的库', otherId.status === 401, `status=${otherId.status} body=${clip(otherId.text, 120)}`)
+
+    // 锁上再解开：验证密码校验与限流提示
+    const lock = await postJson(`${API}/pin/lock`, {})
+    check('2b-PIN', 'api/pin/lock 锁定成功', lock.status === 200 && lock.data?.locked === true, clip(lock.data ?? lock.text, 120))
+    const afterLock = await httpJson(`${API}/tree`)
+    check('2b-PIN', '锁定后 GET api/tree → 401', afterLock.status === 401, `status=${afterLock.status}`)
+
+    const wrong = await postJson(`${API}/pin/unlock`, { pin: '000001' })
+    check('2b-PIN', 'api/pin/unlock 错码 → 401 且提示剩余次数', wrong.status === 401 && /还能试/.test(String(wrong.data?.error ?? '')), `status=${wrong.status} error=${JSON.stringify(wrong.data?.error)}`)
+
+    const unlock = await postJson(`${API}/pin/unlock`, { pin: TEST_PIN })
+    check('2b-PIN', 'api/pin/unlock 正确 PIN → 200 并重新发 Cookie', unlock.status === 200 && unlock.data?.ok === true, clip(unlock.data ?? unlock.text, 160))
+    check('2b-PIN', '解锁后 GET api/tree 恢复可用', (await getJson(`${API}/tree`)).notebooks?.length === 1, '树里只有欢迎笔记本')
+
+    const weakChange = await postJson(`${API}/pin/change`, { old: TEST_PIN, new: '123456' })
+    check('2b-PIN', 'api/pin/change 弱口令会被标记 weak=true', weakChange.status === 200 && weakChange.data?.weak === true, clip(weakChange.data ?? weakChange.text, 160))
+    const backChange = await postJson(`${API}/pin/change`, { old: '123456', new: TEST_PIN })
+    check('2b-PIN', `api/pin/change 改回 ${TEST_PIN}`, backChange.status === 200 && backChange.data?.weak === false, clip(backChange.data ?? backChange.text, 160))
+    const badOld = await postJson(`${API}/pin/change`, { old: '999999', new: TEST_PIN })
+    check('2b-PIN', 'api/pin/change 原 PIN 错误 → 401', badOld.status === 401, `status=${badOld.status}`)
+  } catch (err) {
+    check('2b-PIN', 'PIN 链路执行', false, err instanceof Error ? err.message : String(err))
+    ctx.fatal = 'PIN 链路'
+    return
+  }
+
   const imp = await postJson(`${API}/import/path`, { path: SIYUAN_DATA })
   ctx.importResp = imp.data
   const impOk = imp.status === 200 && imp.data?.ok === true
@@ -1041,11 +1140,13 @@ async function main() {
   const health2 = await getJson(`${API}/health`)
   ctx.healthStats = health2.stats
   const stats = health2.stats ?? {}
+  const welcome = ctx.welcomeStats ?? {}
   for (const [k, v] of Object.entries(EXPECT_STATS)) {
+    const want = v + (welcome[k] ?? 0)
     check(
       '2-stats',
-      `stats.${k} === ${v}`,
-      stats[k] === v,
+      `stats.${k} === ${want}（导入 ${v} + 欢迎库 ${welcome[k] ?? 0}）`,
+      stats[k] === want,
       `实际 ${JSON.stringify(stats[k])}（全量 stats=${JSON.stringify(stats)}）`,
     )
   }
@@ -1053,7 +1154,7 @@ async function main() {
   const tree = await getJson(`${API}/tree`)
   const boxNames = (tree.notebooks ?? []).map((nb) => nb.name)
   const target = findDoc(tree.notebooks ?? [], DOC_TITLE)
-  check('2-数据', `文档树含 2 个笔记本：${JSON.stringify(boxNames)}`, (tree.notebooks ?? []).length === 2, `${(tree.notebooks ?? []).length} 个：${boxNames.join('、')}`)
+  check('2-数据', `文档树含 ${EXPECT_BOXES} 个笔记本（含《${WELCOME_BOX}》）：${JSON.stringify(boxNames)}`, (tree.notebooks ?? []).length === EXPECT_BOXES, `${(tree.notebooks ?? []).length} 个：${boxNames.join('、')}`)
   check('2-数据', `定位到《${DOC_TITLE}》`, Boolean(target), target ? `box=${target.box}（${target.boxName}）doc=${target.id}` : '未找到')
 
   if (!target) {
@@ -1151,12 +1252,42 @@ async function main() {
 
   /* 3a. 严格模式：只用真实二进制 */
   await nav(APP_URL, '真实后端直出页面')
+
+  // 未解锁时应该停在 PIN 屏，且拿不到任何笔记数据
+  const gateState = await cdp
+    .waitFor(
+      `(() => { const g = document.querySelector('.gate'); if (!g) return null; return { shell: !!document.querySelector('.shell'), text: (g.textContent || '').slice(0, 160) } })()`,
+      9000,
+      '.gate（PIN 屏）出现',
+    )
+    .catch(() => null)
+  check('3-锁屏', '未解锁时显示 PIN 屏且不渲染主界面', Boolean(gateState) && gateState.shell === false, gateState ? clip(gateState.text, 160) : '没找到 .gate')
+  const lockedFetch = await cdp.evalJs(`fetch('api/tree').then((r) => r.status).catch(() => -1)`)
+  check('3-锁屏', '页面内 fetch api/tree → 401（未解锁不给目录）', lockedFetch === 401, `status=${lockedFetch}`)
+
+  // 在 PIN 屏上输入 PIN 解锁
+  await cdp.evalJs(`(() => { const el = document.querySelector('.pin-input'); if (el) el.focus(); return !!el })()`)
+  await cdp.insertText(TEST_PIN)
   let strictShell = false
   try {
-    strictShell = Boolean(await cdp.waitFor(`!!document.querySelector('.shell')`, 9000, '.shell 布局出现（严格模式）'))
+    strictShell = Boolean(await cdp.waitFor(`!!document.querySelector('.shell')`, 9000, '解锁后出现主界面'))
   } catch {
     strictShell = false
   }
+  if (!strictShell) {
+    warn('CDP 输入 PIN 未生效，改用直接赋值 + input 事件兜底')
+    await cdp.evalJs(
+      `(() => { const el = document.querySelector('.pin-input'); if (!el) return false; el.value = ${JSON.stringify(TEST_PIN)}; el.dispatchEvent(new Event('input', { bubbles: true })); return true })()`,
+    )
+    try {
+      strictShell = Boolean(await cdp.waitFor(`!!document.querySelector('.shell')`, 9000, '解锁后出现主界面'))
+    } catch {
+      strictShell = false
+    }
+  }
+  check('3-锁屏', `在 PIN 屏输入 ${TEST_PIN} 后进入主界面`, strictShell, strictShell ? '已解锁，.shell 已渲染' : '仍停在 PIN 屏')
+  const gateGone = await cdp.evalJs(`!document.querySelector('.gate')`)
+  check('3-锁屏', '解锁后 PIN 屏已移除', gateGone === true, String(gateGone))
   const bootState = await cdp.evalJs(`(() => ({
     boot: (document.querySelector('.boot') && document.querySelector('.boot').textContent || '').trim(),
     appChildren: (document.querySelector('#app') && document.querySelector('#app').children.length) || 0,
@@ -1201,7 +1332,7 @@ async function main() {
       '阻塞：后端 /assets/ 路由吃掉了前端产物自身的 assets/index-*.js|css，真实二进制页面白屏',
       '浏览器打开真实后端页面只渲染 .boot 占位，引用 ./assets/index-*.js|css 的请求全部 404（JSON 错误体），应用无法装配；无前缀直连模式同样中招（文档 URL 为 /，相对路径同样落到 /assets/）',
       [
-        '.test/ztnote.exe -workspace .test/uiws -addr 127.0.0.1:8801 -prefix /app/zt-note',
+        '.test/ztnote.exe -data .test/uiws -addr 127.0.0.1:8801 -prefix /app/zt-note',
         `curl -s ${BASE}${PREFIX}/   # index.html 引用 ${jsPath}`,
         `curl -sD - ${jsUrl}`,
         cssUrl ? `curl -sD - ${cssUrl}` : '(无 css)',
@@ -1253,8 +1384,8 @@ async function main() {
   check('3-页面', `document.title = ${JSON.stringify(pageInfo.title)}（含 zt-note）`, /zt-note/.test(pageInfo.title ?? ''), pageInfo.title)
   check('3-页面', '.shell / .topbar / .sidebar / .main 布局齐全', pageInfo.hasShell && pageInfo.hasTopbar && pageInfo.hasSidebar && pageInfo.hasMain, JSON.stringify({ shell: pageInfo.hasShell, topbar: pageInfo.hasTopbar, sidebar: pageInfo.hasSidebar, main: pageInfo.hasMain }))
   check('3-页面', '顶栏版本号来自真实后端 health（不是「连接中…」）', /^v/.test(pageInfo.version ?? ''), `version 区文案=${JSON.stringify(pageInfo.version)}`)
-  check('3-树', `文档树渲染 2 个笔记本且含 笔记本A / 示例笔记本`, pageInfo.notebooks.length === 2 && pageInfo.notebooks.includes('笔记本A') && pageInfo.notebooks.includes('示例笔记本'), JSON.stringify(pageInfo.notebooks))
-  check('3-树', `笔记本展开后渲染 12 个文档条目且含《${DOC_TITLE}》`, pageInfo.docs.length === 12 && pageInfo.docs.includes(DOC_TITLE), `${pageInfo.docs.length} 条：${pageInfo.docs.slice(0, 14).join('、')}`)
+  check('3-树', `文档树渲染 ${EXPECT_BOXES} 个笔记本且含 笔记本A / 示例笔记本 / ${WELCOME_BOX}`, pageInfo.notebooks.length === EXPECT_BOXES && pageInfo.notebooks.includes('笔记本A') && pageInfo.notebooks.includes('示例笔记本') && pageInfo.notebooks.includes(WELCOME_BOX), JSON.stringify(pageInfo.notebooks))
+  check('3-树', `笔记本展开后渲染 ${EXPECT_DOCS} 个文档条目且含《${DOC_TITLE}》（含首次进入的欢迎文档）`, pageInfo.docs.length === EXPECT_DOCS && pageInfo.docs.includes(DOC_TITLE), `${pageInfo.docs.length} 条：${pageInfo.docs.slice(0, 14).join('、')}`)
   await cdp.screenshot('01-home')
 
   /* --- 4. 点击《示例文档》查看正文 --- */
@@ -1568,7 +1699,7 @@ async function main() {
   /* --- 9. 导出 zip 与磁盘比对 --- */
   log('\n[9] 导出思源 zip 并与磁盘逐字节比对')
   try {
-    const res = await fetch(`${API}/export/siyuan?box=all`)
+    const res = await fetch(`${API}/export/siyuan?box=all`, withCookie())
     const buf = Buffer.from(await res.arrayBuffer())
     writeFileSync(EXPORT_ZIP, buf)
     const entries = readZip(buf)
@@ -1578,7 +1709,7 @@ async function main() {
     let compared = 0
     let matched = 0
     for (const entry of entries) {
-      const diskPath = join(WS, entry.name)
+      const diskPath = join(USER_WS, entry.name)
       if (!existsSync(diskPath)) {
         missing.push(entry.name)
         continue
@@ -1589,7 +1720,7 @@ async function main() {
     }
     const utf8Ok = entries.every((e) => !/\uFFFD/.test(e.name) && (!/[^\x00-\x7f]/.test(e.name) || e.utf8Flag))
     ctx.exportSiYuan = { entries: entries.length, syCount: syEntries.length, compared, matched, allEqual: mismatch.length === 0, mismatch, missing, utf8Ok }
-    check('9-导出', `api/export/siyuan?box=all 返回 zip（${entries.length} 条目，.sy ${syEntries.length} 个）`, res.status === 200 && syEntries.length === EXPECT_STATS.docs, `status=${res.status} 大小=${(buf.length / 1024).toFixed(0)}KB`)
+    check('9-导出', `api/export/siyuan?box=all 返回 zip（${entries.length} 条目，.sy ${syEntries.length} 个）`, res.status === 200 && syEntries.length === EXPECT_DOCS, `status=${res.status} 大小=${(buf.length / 1024).toFixed(0)}KB`)
     check(
       '9-导出',
       `zip 中每个条目都与磁盘逐字节一致（${matched}/${entries.length}）`,
@@ -1612,7 +1743,7 @@ async function main() {
       )
     }
 
-    const resMd = await fetch(`${API}/export/md?box=all`)
+    const resMd = await fetch(`${API}/export/md?box=all`, withCookie())
     const mdBuf = Buffer.from(await resMd.arrayBuffer())
     writeFileSync(EXPORT_MD_ZIP, mdBuf)
     const mdEntries = readZip(mdBuf)
@@ -1623,7 +1754,7 @@ async function main() {
     const mdAssetMismatch = []
     for (const e of mdEntries) {
       if (!e.name.startsWith('assets/')) continue
-      const diskPath = join(WS, 'data', e.name)
+      const diskPath = join(USER_WS, 'data', e.name)
       if (!existsSync(diskPath)) continue
       mdAssetCompared += 1
       if (readFileSync(diskPath).equals(e.data)) mdAssetMatched += 1
@@ -1642,7 +1773,7 @@ async function main() {
     check(
       '9-导出',
       `api/export/md?box=all 返回 zip：${mdDocs.length} 篇文档 .md + ${mdReadme.length} 个笔记本 README.md`,
-      resMd.status === 200 && mdDocs.length === EXPECT_STATS.docs && mdReadme.length === EXPECT_STATS.notebooks,
+      resMd.status === 200 && mdDocs.length === EXPECT_DOCS && mdReadme.length === EXPECT_BOXES,
       `status=${resMd.status} 条目=${mdEntries.length}（README.md 是每个笔记本一份目录页，因此 .md 总数 = 12 + 2）`,
     )
     check(
@@ -1719,7 +1850,7 @@ async function main() {
 
       const sy = readSy(imgDoc.box, imgDoc.id)
       const name = assetRef.split('/').pop()
-      const assetPath = join(WS, 'data', 'assets', name)
+      const assetPath = join(USER_WS, 'data', 'assets', name)
       const imgNode = (sy.json.Children ?? []).flatMap((c) => c.Children ?? []).find((n) => n.Type === 'NodeImage')
       const dest = (imgNode?.Children ?? []).find((n) => n.Type === 'NodeLinkDest')?.Data
       check('11-图片', '.sy 里写入 NodeImage，src 指向上传资源', Boolean(dest) && dest === assetRef, JSON.stringify({ dest, assetRef }))
@@ -1733,7 +1864,7 @@ async function main() {
 
       // 清理：删测试文档 + 删上传的资源
       await postJson(`${API}/doc/delete`, { box: imgDoc.box, id: imgDoc.id })
-      const docGone = !existsSync(join(WS, 'data', imgDoc.box, `${imgDoc.id}.sy`))
+      const docGone = !existsSync(join(USER_WS, 'data', imgDoc.box, `${imgDoc.id}.sy`))
       let assetGone = true
       try {
         rmSync(assetPath)
@@ -1747,7 +1878,7 @@ async function main() {
       if (imgDoc.id) {
         try {
           await postJson(`${API}/doc/delete`, { box: imgDoc.box, id: imgDoc.id })
-          if (assetRef) rmSync(join(WS, 'data', 'assets', assetRef.split('/').pop()), { force: true })
+          if (assetRef) rmSync(join(USER_WS, 'data', 'assets', assetRef.split('/').pop()), { force: true })
         } catch {
           /* 清理失败不影响结论 */
         }
@@ -1930,7 +2061,7 @@ async function main() {
       if (tblDoc.id) {
         try {
           await postJson(`${API}/doc/delete`, { box: tblDoc.box, id: tblDoc.id })
-          check('12-表格', '清理：测试文档已删除', !existsSync(join(WS, 'data', tblDoc.box, `${tblDoc.id}.sy`)), '')
+          check('12-表格', '清理：测试文档已删除', !existsSync(join(USER_WS, 'data', tblDoc.box, `${tblDoc.id}.sy`)), '')
         } catch {
           /* 清理失败不影响结论 */
         }
@@ -1965,6 +2096,9 @@ async function main() {
         const row = document.querySelector('.tree-row')
         return {
           innerWidth: window.innerWidth,
+          clientW: document.documentElement.clientWidth,
+          innerHeight: window.innerHeight,
+          clientH: document.documentElement.clientHeight,
           burger: burger ? getComputedStyle(burger).display : 'missing',
           more: more ? getComputedStyle(more).display : 'missing',
           sidePos: getComputedStyle(side).position,
@@ -1977,7 +2111,13 @@ async function main() {
           overflowX: document.documentElement.scrollWidth - window.innerWidth,
         }
       })()`)
-      check('13-窄屏', '视口切到 390×844（innerWidth=390）', base?.innerWidth === 390, JSON.stringify(base?.innerWidth))
+      // innerWidth 是「视觉视口」：Chrome 在移动模拟下可能套一层 shrink-to-fit 缩放，故两者取其一
+      check(
+        '13-窄屏',
+        '视口切到 390×844（布局视口 390）',
+        base?.clientW === 390 || (base?.innerWidth ?? 0) === 390,
+        JSON.stringify({ clientW: base?.clientW, innerWidth: base?.innerWidth }),
+      )
       check('13-窄屏', '☰ / ⋯ 两个按钮在窄屏出现（宽屏隐藏）', base?.burger !== 'none' && base?.more !== 'none', JSON.stringify({ burger: base?.burger, more: base?.more }))
       check('13-窄屏', '侧栏离开文档流变抽屉：position:fixed 且收在屏幕外', base?.sidePos === 'fixed' && base?.sideRight <= 1 && base?.sideTop > 0, JSON.stringify({ position: base?.sidePos, right: base?.sideRight, top: base?.sideTop }))
       check('13-窄屏', '动作面板默认收起、版本号平时不占地方', base?.actions === 'none' && base?.version === 'none', JSON.stringify({ actions: base?.actions, version: base?.version }))
@@ -2075,18 +2215,20 @@ async function main() {
             editorFont: parseFloat(getComputedStyle(document.querySelector('.ProseMirror')).fontSize),
             maxH: cs.maxHeight, minH: cs.minHeight,
             innerHeight: window.innerHeight,
+            clientH: document.documentElement.clientHeight,
             toolbarBottom: Math.round(document.querySelector('.zt-toolbar').getBoundingClientRect().bottom),
             overflowX: document.documentElement.scrollWidth - window.innerWidth,
           }
         })()`)
         check('13-编辑', '工具条按钮高 ≥32px（触控目标）', (ed?.minBtn ?? 0) >= 32, JSON.stringify({ 共: ed?.btnCount, 最小: ed?.minBtn }))
         check('13-编辑', '编辑区字号 ≥16px（iOS 聚焦不缩放）', (ed?.editorFont ?? 0) >= 16, String(ed?.editorFont))
-        // 视觉行高按视口算：100dvh - 210px（不是桌面端的 100vh - 300px）
+        // 视觉行高按视口算：100dvh - 210px（不是桌面端的 100vh - 300px）；用布局视口高比对，容差 2px
+        const refH = ed?.clientH || ed?.innerHeight || 0
         check(
           '13-编辑',
           '编辑区高度按手机视口算（100dvh-210px）且下限 240px',
-          Math.abs(parseFloat(String(ed?.maxH)) - ((ed?.innerHeight ?? 0) - 210)) <= 2 && ed?.minH === '240px',
-          JSON.stringify({ maxH: ed?.maxH, 期望: `${(ed?.innerHeight ?? 0) - 210}px`, minH: ed?.minH }),
+          Math.abs(parseFloat(String(ed?.maxH)) - (refH - 210)) <= 2 && ed?.minH === '240px',
+          JSON.stringify({ maxH: ed?.maxH, 期望: `${refH - 210}px`, minH: ed?.minH, clientH: ed?.clientH, innerHeight: ed?.innerHeight }),
         )
         check('13-编辑', '工具条在首屏内（bottom < 视口高）', (ed?.toolbarBottom ?? 9999) < 844, String(ed?.toolbarBottom))
 
@@ -2146,7 +2288,7 @@ async function main() {
       if (mobDoc.id) {
         try {
           await postJson(`${API}/doc/delete`, { box: mobDoc.box, id: mobDoc.id })
-          check('13-窄屏', '清理：测试文档已删除', !existsSync(join(WS, 'data', mobDoc.box, `${mobDoc.id}.sy`)), '')
+          check('13-窄屏', '清理：测试文档已删除', !existsSync(join(USER_WS, 'data', mobDoc.box, `${mobDoc.id}.sy`)), '')
         } catch {
           /* 清理失败不影响结论 */
         }
@@ -2161,9 +2303,10 @@ async function main() {
   ctx.apiTraffic = cdp.network.map((n) => ({ method: n.method, url: n.url.replace(BASE, ''), status: n.status }))
   check('10-异常', '无未捕获 JS 异常（pageerror）', cdp.pageErrors.length === 0, cdp.pageErrors.slice(0, 3).join(' | '))
   check('10-异常', '无 console.error', cdp.consoleErrors.length === 0, cdp.consoleErrors.slice(0, 3).join(' | '))
-  const logErrNon404 = cdp.logErrors.filter((t) => !/404/.test(t))
-  if (cdp.logErrors.length) warn(`浏览器日志有 ${cdp.logErrors.length} 条 error 级记录（含 404）：${cdp.logErrors.slice(0, 4).join(' | ')}`)
-  check('10-异常', '浏览器日志无 404 以外的 error', logErrNon404.length === 0, logErrNon404.slice(0, 3).join(' | '))
+  // 404（故意探不存在的资源）与 401（PIN 门故意探 api/tree）都不算异常
+  const logErrNon404 = cdp.logErrors.filter((t) => !/404/.test(t) && !(/401/.test(t) && /api\/tree/.test(t)))
+  if (cdp.logErrors.length) warn(`浏览器日志有 ${cdp.logErrors.length} 条 error 级记录（含预期内的 404 / PIN 门 401）：${cdp.logErrors.slice(0, 4).join(' | ')}`)
+  check('10-异常', '浏览器日志无 404 以外的 error（除 PIN 门故意探的 401）', logErrNon404.length === 0, logErrNon404.slice(0, 3).join(' | '))
   if (cdp.pageErrors.length || cdp.consoleErrors.length) {
     bug(
       '页面出现未捕获 JS 异常/console.error',

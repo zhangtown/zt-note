@@ -17,6 +17,7 @@
 | 10 | 图片与资源 | 编辑器粘贴/拖拽/按钮上传（`api/assets/upload`）；排版保真（`parent-style`/`style` 一行多图）；修掉“导入后图片全 404”（`internal/importer` 资源改名未改写引用） |
 | 11 | 表格编辑 | 思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格双向映射（`internal/siyuan/pm.go` 的 `tableToPM`/`pmTableToSy`、`model.go` 的 `TableRows`/`TableColumns`/`TableSpan`）；插入 3×3 + 浮动操作条；`colgroup`/对齐/合并单元格往返。证据：`internal/siyuan/table_test.go` 全绿（含“只有 `NodeTableHead` 的表格不能丢表头行”“未改动表格 sha 不变”），前端逻辑测试 34/34，浏览器 e2e 20 项表格断言全绿 |
 | 12 | 窄屏 / 手机适配 | 纯 CSS 媒体查询（≤720px）：侧栏改抽屉（`body.is-drawer-open` + `.drawer-mask`）、动作收进 ☰/⋯ 面板、目录行 38px / 工具条按钮 32px / 输入框 36px、搜索框与编辑区 ≥16px（免 iOS 聚焦缩放）、阅读与编辑区的表格 `display:block + overflow-x:auto` 自滚、编辑区 `calc(100dvh - 210px)`。新增 `ui/views/topbar.ts` 的 ☰/⋯ 与 `TopbarHandle.closePanels`。证据：e2e 第 13 节 25 项断言全绿（390×844 模拟手机，含“窄屏真插入表格并输入 → 保存后 `.sy` 是 NodeTable”、整页零横向溢出） |
+| 13 | 多用户隔离 + PIN 锁 | 每个飞牛账号一份工作区（`$TRIM_PKGVAR/users/<uid>/workspace`，`internal/users`）；旧单用户库首启自动迁给 `1000`（幂等）；6 位 PIN（PBKDF2-HMAC-SHA256 12 万次 + 每用户盐，`users/<uid>/pin.json`）+ `ztnote_session` Cookie（HttpOnly、30 天、绑 uid）；未解锁时数据接口一律 401（标题/正文/图片都不下发）；首次解锁送《我的笔记》+ 欢迎文档；入口改 `allUsers:true` | `go test ./...` 29 个用例全绿（新增 `internal/users/users_test.go` 7 个 + `internal/server/session_test.go` 8 个：身份头解析/路径穿越/PIN 哈希不含明文/连错 5 次锁 1 分钟/令牌绑 uid/过隔离与 401 门）；浏览器 e2e 153/153（含「PIN 屏→解锁→锁定→错码→换账号」23 项）；前端逻辑 34/34 |
 
 ## 待办
 
@@ -27,7 +28,9 @@
 - [ ] 块引用 / 块属性面板（`.sy` 里已保留原始字段，属于“读得懂写不回”）
 - [x] 表格编辑（思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格；插入、增删行列、表头行、`.sy` 往返）
 - [ ] 标签、书签、日记本等思源衍生块
-- [ ] 多用户与权限（现在只区分管理员/非管理员，由网关决定）
+- [ ] PIN 管理页（现只有「锁」与「改」接口，前端只接了锁定按钮；改 PIN/忘了 PIN 的引导还在 PIN 屏文案里）
+- [ ] 每用户配额/存储占用提示
+- [ ] 实机验证两个普通账号互相看不到对方的库（开发环境已用两个身份头验过）
 - [ ] 定时/手动备份工作区（或写进 fpk 的 lifecycle 脚本）
 - [ ] 移动端适配
 - [ ] 编辑模式下的块级定位（现在搜索总是开阅读视图；编辑器 DOM 未带 `data-node-id`）
@@ -66,7 +69,10 @@
 - **保真靠"原样复用"而不是"完善反序列化"**：未编辑块直接 `json.RawMessage` 回写，
   避免穷举思源字段（这是唯一能真正做到逐字节一致的路子）
 - **图标用 Go 生成**（`tools/mkicon`）：不引入 Node/ImageMagick 依赖，4x 超采样抗锯齿
-- **鉴权交给网关**：应用内不做账号体系，`allUsers:false` + `X-Trim-Isadmin`
+- **鉴权交给网关 + 按 uid 分库**：应用不做账号体系，身份全靠网关注入的 `X-Trim-Userid`；
+  入口 `allUsers:true`，安全边界是「每用户一份独立工作区」，不是管理员头
+- **PIN 只守浏览入口，不碰内容**：6 位数字 + PBKDF2 + 服务端 401（未解锁连标题都不发），
+  但磁盘上仍是明文 `.sy` —— 不把“应用层 PIN”包装成“加密”
 - **图片排版属性双写**：思源把“一行几张”记在图片节点的 `parent-style: width:25%`、把原图宽度
   记在 `style: width:10000px`（靠 `max-width:100%` 收进容器）。两边都保真才能还原一行多图；
   编辑时这组默认值存在 docjson 的节点默认属性里（`ui/src/docjson.ts` 的 `defaultAttrs`）

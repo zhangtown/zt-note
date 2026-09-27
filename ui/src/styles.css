@@ -1616,3 +1616,274 @@ mark {
     max-width: none;
   }
 }
+
+/* ---------------- PIN 门（启动屏） ---------------- */
+
+.gate {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  box-sizing: border-box;
+  background: var(--bg);
+}
+
+.gate-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px 22px 18px;
+  box-shadow: var(--shadow, 0 10px 30px rgba(0, 0, 0, 0.08));
+}
+
+.gate-card.is-busy {
+  opacity: 0.85;
+}
+
+.gate-card.is-shake {
+  animation: gate-shake 0.32s ease-in-out;
+}
+
+@keyframes gate-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-7px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+.gate-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gate-title {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.gate-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.gate-who {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 14px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.06));
+  font-size: 13px;
+}
+
+.gate-who-icon {
+  font-size: 14px;
+}
+
+.gate-who-name {
+  font-weight: 600;
+}
+
+.gate-who-uid {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gate-lead {
+  margin: 14px 0 16px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* 6 个圆点 + 透明输入框 */
+.pin-box {
+  position: relative;
+  display: flex;
+  gap: 0;
+}
+
+.pin-slots {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.pin-slot {
+  flex: 1 1 0;
+  height: 46px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--fg);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.pin-slot.is-filled {
+  border-color: var(--accent, #3f7dff);
+}
+
+.pin-slot.is-cursor {
+  border-color: var(--accent, #3f7dff);
+  box-shadow: 0 0 0 2px rgba(63, 125, 255, 0.18);
+}
+
+/* 输入框铺满整行但不可见：点哪儿都能唤起键盘 */
+.pin-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px;
+  letter-spacing: 0;
+  outline: none;
+  opacity: 0.01;
+}
+
+.gate-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.gate-submit {
+  flex: 1;
+  height: 40px;
+  font-size: 14px;
+}
+
+.gate-msg {
+  min-height: 20px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.gate-msg.is-error {
+  color: var(--danger, #d64545);
+}
+
+.gate-help {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.gate-help summary {
+  cursor: pointer;
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.gate-help p {
+  margin: 8px 0;
+}
+
+.gate-help code {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.1));
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.gate-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.gate-dot {
+  opacity: 0.6;
+}
+
+/* ---------------- 工具条上的身份 ---------------- */
+
+.btn.who {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 190px;
+}
+
+.who-icon {
+  font-size: 12.5px;
+  line-height: 1;
+}
+
+.who-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.who-badge {
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.who-badge.is-muted {
+  opacity: 0.75;
+}
+
+.menu-info {
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+.menu-info-sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* 窄屏：只留头像与徽标，名字藏起来省地方 */
+@media (max-width: 720px) {
+  .who-name {
+    display: none;
+  }
+
+  .btn.who {
+    max-width: none;
+  }
+
+  .gate-card {
+    padding: 20px 16px 16px;
+  }
+}

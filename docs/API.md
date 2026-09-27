@@ -12,7 +12,7 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `api/health` | `{ok,version,dataDir,prefix}` |
+| GET | `api/health` | `{ok,version,dataRoot,prefix,frontend,user,needsPin,locked,users,dataDir?,stats?}`（未解锁时不下发 `dataDir`/`stats`） |
 | GET | `api/tree` | `{notebooks:[{id,name,icon,docs:[{id,title,updated,children:[...]}]}]}` |
 | GET | `api/doc?box=<boxID>&id=<docID>` | `{id,box,title,updated,readonly,html,blocks:[{id,type,level?,pm}]}` |
 | GET | `api/search?q=<词>&limit=50` | `{hits:[{box,id,title,blockId,snippet}]}`（标题+正文，忽略大小写） |
@@ -72,8 +72,31 @@
 - **markdown 格式**：`<笔记本名>/<标题>.md` + `assets/*`（即 示例工作区/markdown-export 的结构），逐个转 .sy。
 - 单文件 `.md`（如「全部笔记汇总.md」）→ 建一个同名笔记本，按一级标题拆成多篇文档。
 
+## 会话与 PIN
+
+未解锁时，所有数据接口（`api/tree`、`api/doc`、`api/search`、`assets/*`、导入导出）一律 `401`
+——标题、正文、图片都不下发；只有 `api/health`、`api/session` 与 `api/pin/*` 可用。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `api/session` | `{version,prefix,user:{uid,name,isAdmin,local},needsSetup,locked,hasLibrary,stats?}`；前端据此决定先显示「设 PIN」屏、「解锁」屏还是主界面 |
+| POST | `api/pin/setup` | `{pin:"6 位数字"}` → `{ok,onboarded,weak}`，同时下发会话 Cookie；仅在该用户从未设过 PIN 时可用 |
+| POST | `api/pin/unlock` | `{pin}` → `{ok,weak}`；错码 → 401，响应里带剩余次数 |
+| POST | `api/pin/lock` | `{}` → `{ok,locked:true}`（已解锁时用） |
+| POST | `api/pin/change` | `{old,new}` → `{ok,weak}`；`weak:true` 指新 PIN 命中弱口令表（仍可设置，前端只给提示） |
+
+会话：`ztnote_session` Cookie（HttpOnly、SameSite=Lax、Path=`<prefix>/`、30 天），值是服务端随机令牌，
+绑定 uid——同一个浏览器换了网关注入的 uid，令牌也不认。
+
+PIN 存储：`users/<uid>/pin.json`——PBKDF2-HMAC-SHA256（10 万次迭代）+ 每用户随机盐，只存 salt 与 hash；
+连续错 5 次锁 30 秒（按 uid 计数）。PIN 是「防旁人随手翻看」的门，不是加密：磁盘上仍是明文 `.sy`
+（要抗物理访问得靠卷加密）。
+
+首次解锁（`setup`）时自动建《我的笔记》与一篇欢迎文档。
+
 ## 鉴权
 
-统一网关注入 `X-Trim-Userid` / `X-Trim-Isadmin` / `X-Trim-Username`。
-应用入口 `allUsers:false`（仅管理员可见）；v1 不做应用内账号体系，写操作要求 `X-Trim-Isadmin: true`
-（开发直连无该头时放行，便于本机调试）。
+`X-Trim-Userid` / `X-Trim-Username` / `X-Trim-Isadmin` 由统一网关注入，应用按 `uid` 隔离：
+每个账号一份独立工作区 `$TRIM_PKGVAR/users/<uid>/workspace`（`internal/users`）；缺该头
+（本机直连、开发）时回落为 `local` 用户。入口 `allUsers:true`，所以不再用管理员头做权限判断
+——隔离靠 uid，防旁人靠 PIN。

@@ -118,3 +118,10 @@ export function startRouter(onRoute: Handler): void {
   }
   handler(parseHash(window.location.hash))
 }
+
+/** 停掉路由监听（上锁后重新挂载应用时用，否则会叠多个监听）。 */
+export function stopRouter(): void {
+  window.removeEventListener('hashchange', onHashChange)
+  handler = null
+  guard = null
+}

@@ -6,6 +6,51 @@ export interface HealthResp {
   version: string
   dataDir: string
   prefix?: string
+  dataRoot?: string
+  frontend?: boolean
+  user?: UserInfo
+  needsPin?: boolean
+  locked?: boolean
+  users?: number
+}
+
+/** 当前请求的身份（来自飞牛网关头；本地开发时是 local）。 */
+export interface UserInfo {
+  uid: string
+  name: string
+  isAdmin: boolean
+  local: boolean
+}
+
+/** GET api/session：前端靠它决定先显示 PIN 屏还是主界面。 */
+export interface SessionResp {
+  version: string
+  prefix?: string
+  user: UserInfo
+  /** 还没设过 PIN */
+  needsSetup: boolean
+  /** 已设 PIN 但本设备未解锁 */
+  locked: boolean
+  /** 数据目录里已经有笔记库 */
+  hasLibrary: boolean
+  dataDir?: string
+  stats?: Stats
+}
+
+export interface Stats {
+  notebooks: number
+  docs: number
+  blocks: number
+  chars: number
+  assets: number
+}
+
+/** PIN 接口的返回：onboarded 表示这次刚建好新手库。 */
+export interface PinResp {
+  user: UserInfo
+  onboarded?: boolean
+  weak?: boolean
+  locked?: boolean
 }
 
 export interface DocNode {

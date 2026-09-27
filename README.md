@@ -5,9 +5,10 @@
 数据不锁死在应用里。
 
 - **形态**：fnOS 原生应用（`.fpk`）；Go 单二进制（8 MB）+ 内嵌前端（Vite + TipTap）
-- **访问**：应用中心安装后打开即用；经飞牛统一网关挂在 `/app/zt-note`，鉴权交给网关
+- **访问**：应用中心安装后打开即用；经飞牛统一网关挂在 `/app/zt-note`，身份用网关的账号，进应用再过一个 6 位 PIN
+- **多用户**：每个飞牛账号一份独立笔记库（`users/<uid>/workspace`），互相看不见
 - **存储**：工作区目录下，一个笔记本 = 一个目录，一篇文档 = 一个 `.sy` 文件
-  （默认 `$TRIM_PKGVAR/workspace`，即 `/vol1/@appdata/zt-note/workspace`）
+  （默认 `$TRIM_PKGVAR/users/<uid>/workspace`，即 `/vol1/@appdata/zt-note/users/1000/workspace`）
 
 ## 为什么是 Web 应用而不是 Tauri
 
@@ -36,7 +37,7 @@ zt-note 的做法是把保真做成默认路径：
 
 ```bash
 bash build.sh                       # 建 Windows 开发二进制（前端源码更新时自动重建前端）
-.test/ztnote.exe -workspace .test/workspace -addr 127.0.0.1:8765
+.test/ztnote.exe -data .test/data -addr 127.0.0.1:8765
 
 # 前端热更新（vite proxy 到 8765），开发时不需要 build.sh
 cd ui && npm ci && npm run dev
@@ -86,6 +87,23 @@ CI（`.github/workflows/ci.yml`）：Go vet + 单测、前端类型检查/build/
 图片按原名导入（同名冲突才改名，并同步改写文档里的 `assets/...` 引用——否则 `.sy` 里的
 图片会全部 404）。
 
+## 多用户与 PIN
+
+每个飞牛账号一份**独立笔记库**，互不可见：网关把账号身份注入 `X-Trim-Userid`，应用按它选工作区
+`$TRIM_PKGVAR/users/<uid>/workspace`（本机直连无该头时用一个叫 `local` 的身份）。
+
+首次打开要先设一个 **6 位 PIN**，之后每次进入都要解锁：
+
+- 未解锁时服务端对所有数据接口返 `401`——**标题、正文、图片一律不下发**，不是前端遮一下
+- 解锁状态存在 `ztnote_session` Cookie（HttpOnly，30 天，令牌绑 uid），顶栏「⋯」里有「立即锁定」
+- PIN 存在 `users/<uid>/pin.json`：PBKDF2-HMAC-SHA256（10 万次迭代）+ 每用户随机盐，不存明文；
+  连错 5 次锁 30 秒
+- 首次解锁会送一个《我的笔记》笔记本和一篇欢迎文档，顺手写请怎么用
+- 升级：旧版单用户目录 `workspace/` 首次启动自动迁到 `users/1000/workspace`（幂等，日志有记录）
+
+要说清楚的是：**PIN 是防旁人随手翻看的门，不是加密**。磁盘上仍是明文 `.sy`，真要抗物理访问
+得靠卷加密或整盘加密；这个应用不碰那些。
+
 ## 图片
 
 - **上传**：编辑器里直接粘贴、拖拽，或用工具条的「图片」按钮 → `api/assets/upload` → 插入图片节点
@@ -127,7 +145,8 @@ cmd/ztnote/          进程入口：socket/TCP 监听、工作区、前缀
 internal/siyuan/     .sy 读写与保真层（model/render/pm/markdown/base64）
 internal/store/      工作区服务：文档树、增删改查、搜索、导出
 internal/importer/   导入（siyuan / markdown / 汇总 md 拆分）
-internal/server/     HTTP 路由与网关鉴权
+internal/users/      多用户：网关注入身份解析、每用户工作区、旧库迁移、PIN 存储
+internal/server/     HTTP 路由、网关鉴权、会话/PIN 门
 internal/webui/      前端产物 go:embed
 ui/                  Vite + TypeScript + TipTap 前端
 tools/sycheck/       保真校验器（对比原始/回写的 .sy）
@@ -146,4 +165,5 @@ docs/PROGRESS.md     进度与待办
   （`style` 原值会写回，但编辑时前端不提供拖拽改尺寸）
 - 代码块：语言、折行等以原字段为准；未编辑时整个节点原样复用
 - 未实现：块引用/块属性面板、标签与书签、图纸/数据库等衍生块类型的编辑
-- 应用内无账号体系：写操作要求网关注入 `X-Trim-Isadmin: true`（本机直连无该头时放行）
+- 应用内没有账号体系：身份由网关（飞牛账号）决定，密码也就是飞牛的；应用自己只有 6 位 PIN
+  （只守浏览入口，不加密数据）

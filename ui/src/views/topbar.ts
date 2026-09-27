@@ -1,7 +1,8 @@
 // 顶部工具条：新建 / 重命名 / 删除 / 导入 / 导出 / 搜索 / 版本
 import { store } from '../store'
 import { h, toast } from '../dom'
-import type { CurrentSelection } from '../types'
+import type { CurrentSelection, SessionResp } from '../types'
+import { openPinChangeDialog } from './gate'
 
 export interface TopbarCtx {
   onNewNotebook: () => void
@@ -12,6 +13,10 @@ export interface TopbarCtx {
   onExport: (format: 'siyuan' | 'md', box: string) => void
   onSearch: (q: string) => void
   onGoHome: () => void
+  /** 当前身份（飞牛网关给的账号） */
+  session: SessionResp
+  /** 锁定：丢掉会话，回到 PIN 屏 */
+  onLock: () => void
 }
 
 export interface TopbarHandle {
@@ -118,6 +123,7 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
 
   btnExport.addEventListener('click', (e) => {
     e.stopPropagation()
+    closeWhoMenu()
     if (menu.classList.contains('is-hidden')) {
       buildMenu()
       menu.classList.remove('is-hidden')
@@ -127,10 +133,79 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
   })
   document.addEventListener('click', () => {
     closeMenu()
+    closeWhoMenu()
     closePanels()
   })
 
   const exportWrap = h('div', { class: 'menu-wrap' }, btnExport, menu)
+
+  /* ---- 当前身份：看是谁、改 PIN、锁定 ---- */
+  const whoName = ctx.session.user.name
+  const whoBtn = h(
+    'button',
+    {
+      class: 'btn who',
+      type: 'button',
+      title: `当前身份：${whoName}（uid ${ctx.session.user.uid}）`,
+    },
+    h('span', { class: 'who-icon' }, '👤'),
+    h('span', { class: 'who-name' }, whoName),
+    ctx.session.user.isAdmin ? h('span', { class: 'who-badge' }, '管理员') : null,
+  )
+  const whoMenu = h('div', { class: 'menu is-hidden' })
+  const closeWhoMenu = (): void => whoMenu.classList.add('is-hidden')
+
+  function buildWhoMenu(): void {
+    const info = h(
+      'div',
+      { class: 'menu-info' },
+      h('div', {}, `身份：${whoName}`),
+      h('div', { class: 'menu-info-sub' }, `uid ${ctx.session.user.uid} · 每个账号的笔记互相独立`),
+    )
+    const items = [
+      {
+        label: '修改 PIN',
+        sub: '原 PIN + 新 PIN',
+        run: () => void openPinChangeDialog(),
+      },
+      {
+        label: '锁定',
+        sub: '下次打开需要重新输 PIN',
+        run: () => ctx.onLock(),
+      },
+    ]
+    whoMenu.replaceChildren(
+      info,
+      ...items.map((item) =>
+        h(
+          'button',
+          {
+            class: 'menu-item',
+            type: 'button',
+            onclick: () => {
+              closeWhoMenu()
+              closePanels()
+              item.run()
+            },
+          },
+          h('span', { class: 'menu-item-label' }, item.label),
+          item.sub ? h('span', { class: 'menu-item-sub' }, item.sub) : null,
+        ),
+      ),
+    )
+  }
+
+  whoBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    closeMenu()
+    if (whoMenu.classList.contains('is-hidden')) {
+      buildWhoMenu()
+      whoMenu.classList.remove('is-hidden')
+    } else {
+      closeWhoMenu()
+    }
+  })
+  const whoWrap = h('div', { class: 'menu-wrap' }, whoBtn, whoMenu)
 
   /* ---- 搜索 ---- */
   const searchInput = h('input', {
@@ -184,7 +259,7 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
       btnImport,
       exportWrap,
     ),
-    h('div', { class: 'topbar-right' }, searchInput, version, btnMore),
+    h('div', { class: 'topbar-right' }, searchInput, whoWrap, version, btnMore),
   )
 
   function refresh(): void {

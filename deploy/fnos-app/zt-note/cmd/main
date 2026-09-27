@@ -3,14 +3,15 @@
 #
 # The Go binary serves HTTP over a unix socket ($TRIM_APPDEST/app.sock);
 # the fnOS unified gateway proxies /app/zt-note to it. No TCP port is used.
-# User notes live in ${TRIM_PKGVAR}/workspace (see below) — that is the only
+# User notes live in ${TRIM_PKGVAR}/users/<uid>/workspace (one workspace per NAS
+# account; the uid comes from the gateway's X-Trim-Userid header). That is the only
 # directory that matters for backups.
 
 LOG_FILE="${TRIM_PKGVAR}/app.log"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 BIN="${TRIM_APPDEST}/bin/ztnote"
 SOCKET_PATH="${TRIM_APPDEST}/app.sock"
-WORKSPACE="${TRIM_PKGVAR}/workspace"
+DATA_ROOT="${TRIM_PKGVAR}"
 GATEWAY_PREFIX="/app/zt-note"
 
 log_msg() {
@@ -36,15 +37,16 @@ start_app() {
   if status_app; then
     return 0
   fi
-  mkdir -p "$TRIM_PKGVAR" "$WORKSPACE"
+  mkdir -p "$TRIM_PKGVAR"
   if [ ! -x "$BIN" ]; then
     log_msg "ERROR: binary not found or not executable: $BIN"
     exit 1
   fi
   log_msg "Starting zt-note..."
   rm -f "$SOCKET_PATH"
+  # 升级首启会把旧版 ${TRIM_PKGVAR}/workspace 迁给 ZTNOTE_LEGACY_OWNER（默认 1000）。
   GATEWAY_PREFIX="$GATEWAY_PREFIX" \
-    "$BIN" -workspace "$WORKSPACE" -sock "$SOCKET_PATH" -prefix "$GATEWAY_PREFIX" \
+    "$BIN" -data "$DATA_ROOT" -sock "$SOCKET_PATH" -prefix "$GATEWAY_PREFIX" \
     >> "$LOG_FILE" 2>&1 &
   echo "$!" > "$PID_FILE"
   # wait for the socket so the gateway can register us

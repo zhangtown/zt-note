@@ -10,6 +10,20 @@ export class ApiError extends Error {
   }
 }
 
+/** 会话失效（锁定 / 后端重启）时的回调：app 层用它回到 PIN 屏。 */
+let onUnauthorized: (() => void) | null = null
+
+export function setUnauthorizedHandler(fn: (() => void) | null): void {
+  onUnauthorized = fn
+}
+
+/** 是否有请求因为未解锁而失败（避免 401 风暴时反复弹解锁屏）。 */
+let gateBusy = false
+
+export function setGateBusy(busy: boolean): void {
+  gateBusy = busy
+}
+
 async function parse(res: Response): Promise<Record<string, unknown>> {
   const text = await res.text()
   let data: unknown = null
@@ -28,6 +42,8 @@ async function parse(res: Response): Promise<Record<string, unknown>> {
         : text
           ? text.slice(0, 300)
           : `请求失败（HTTP ${res.status}）`
+    // 401：会话没了（被锁定 / 后端重启 / Cookie 过期），交给 app 层重新上锁
+    if (res.status === 401 && !gateBusy) onUnauthorized?.()
     throw new ApiError(msg, res.status)
   }
   if (data === null && text) {
@@ -96,7 +112,13 @@ export function apiUpload<T>(
 
 /** 便捷封装 */
 export const api = {
-  health: () => apiGet<{ version: string; dataDir: string; prefix?: string }>('api/health'),
+  health: () => apiGet<import('./types').HealthResp>('api/health'),
+  session: () => apiGet<import('./types').SessionResp>('api/session'),
+  pinSetup: (pin: string) => apiPost<import('./types').PinResp>('api/pin/setup', { pin }),
+  pinUnlock: (pin: string) => apiPost<import('./types').PinResp>('api/pin/unlock', { pin }),
+  pinLock: () => apiPost<{ locked: boolean }>('api/pin/lock'),
+  pinChange: (oldPin: string, newPin: string) =>
+    apiPost<import('./types').PinResp>('api/pin/change', { old: oldPin, new: newPin }),
   tree: () => apiGet<{ notebooks: import('./types').Notebook[] }>('api/tree'),
   doc: (box: string, id: string) =>
     apiGet<import('./types').DocResp>(`api/doc?box=${encodeURIComponent(box)}&id=${encodeURIComponent(id)}`),

@@ -1,18 +1,108 @@
-// 应用装配：布局（顶部工具条 + 左侧文档树 + 主区域）、路由分发、全局动作
-import { api, exportUrl, triggerDownload } from './api'
+// 应用装配：会话（PIN 门）→ 布局（顶部工具条 + 左侧文档树 + 主区域）、路由分发、全局动作
+import { api, exportUrl, setGateBusy, setUnauthorizedHandler, triggerDownload } from './api'
 import { confirmDialog, h, promptDialog, toast } from './dom'
-import { currentRoute, navigate, parseHash, selectionOf, startRouter, type Route } from './router'
+import {
+  currentRoute,
+  navigate,
+  parseHash,
+  selectionOf,
+  startRouter,
+  stopRouter,
+  type Route,
+} from './router'
 import { store, docTitle } from './store'
 import { createTreeView, type TreeHandle } from './views/tree'
 import { createTopbar, type TopbarHandle } from './views/topbar'
 import { mountDoc, type ViewHandle } from './views/doc'
+import { createGate } from './views/gate'
 import { mountHome } from './views/home'
 import { mountImport } from './views/import'
 import { mountSearch } from './views/search'
+import type { SessionResp } from './types'
+
+/** 当前挂载的主界面拆除函数（上锁 / 换身份时用） */
+let teardown: (() => void) | null = null
+/** 现在是不是停在 PIN 屏（避免 401 风暴里反复重建） */
+let gated = false
+
+/* ---------------- 启动：先问会话，再决定显示 PIN 屏还是主界面 ---------------- */
 
 export function bootstrap(): void {
   const app = document.getElementById('app')
   if (!app) throw new Error('缺少 #app 挂载点')
+  setUnauthorizedHandler(() => {
+    // 会话没了（锁定 / 后端重启）：回到 PIN 屏
+    if (gated) return
+    gated = true
+    setGateBusy(true)
+    void openSession(app)
+  })
+  void openSession(app)
+}
+
+async function openSession(app: HTMLElement): Promise<void> {
+  teardown?.()
+  teardown = null
+  try {
+    const session = await api.session()
+    if (session.needsSetup || session.locked) {
+      gated = true
+      setGateBusy(true)
+      app.replaceChildren(
+        createGate({
+          session,
+          onUnlocked: () => {
+            gated = false
+            setGateBusy(false)
+            void openSession(app)
+          },
+        }),
+      )
+      return
+    }
+    gated = false
+    setGateBusy(false)
+    teardown = mountApp(app, session)
+  } catch (err) {
+    gated = true
+    setGateBusy(true)
+    app.replaceChildren(bootError(err, () => void openSession(app)))
+  }
+}
+
+/** 后端连不上时的启动错误屏 */
+function bootError(err: unknown, retry: () => void): HTMLElement {
+  const message = err instanceof Error ? err.message : String(err)
+  return h(
+    'div',
+    { class: 'gate' },
+    h(
+      'div',
+      { class: 'gate-card' },
+      h(
+        'div',
+        { class: 'gate-brand' },
+        h('span', { class: 'brand-mark' }, 'Zt'),
+        h(
+          'div',
+          {},
+          h('div', { class: 'gate-title' }, '云记笔记'),
+          h('div', { class: 'gate-sub' }, '飞牛 NAS · 思源笔记格式'),
+        ),
+      ),
+      h('div', { class: 'gate-msg is-error' }, `连不上后端：${message}`),
+      h(
+        'div',
+        { class: 'gate-actions' },
+        h('button', { class: 'btn primary', type: 'button', onclick: retry }, '重试'),
+      ),
+    ),
+  )
+}
+
+/* ---------------- 主界面 ---------------- */
+
+function mountApp(app: HTMLElement, session: SessionResp): () => void {
 
   const main = h('main', { class: 'main', id: 'main' })
   let current: ViewHandle | null = null
@@ -202,7 +292,19 @@ export function bootstrap(): void {
     onExport: actionExport,
     onSearch: (q) => navigate({ name: 'search', q }),
     onGoHome: () => navigate({ name: 'home' }),
+    session,
+    onLock: () => void lockNow(),
   })
+
+  async function lockNow(): Promise<void> {
+    try {
+      await api.pinLock()
+    } catch {
+      /* 已经失效也无所谓，下面照样回 PIN 屏 */
+    }
+    store.selection = null
+    await openSession(app)
+  }
 
   app.replaceChildren(
     h(
@@ -245,4 +347,14 @@ export function bootstrap(): void {
   })
   // startRouter 会同步触发一次渲染；若实现改为异步监听，这里补一次
   void render(parseHash(location.hash))
+
+  return () => {
+    stopRouter()
+    current?.destroy()
+    current = null
+    store.selection = null
+    store.tree = null
+    store.treeLoaded = false
+    store.treeError = ''
+  }
 }
