@@ -222,7 +222,9 @@ async function probeHealth() {
 
 /* ================= 构建 & 服务进程 ================= */
 
-function newestMtime(dir, ignore = new Set(['node_modules', '.git', '.test', 'dist'])) {
+function newestMtime(dir, ignore = new Set(['node_modules', '.git', '.test'])) {
+  // 注意：别把 'dist' 放进 ignore —— `internal/webui/dist` 是被 go:embed 进二进制的前端产物，
+  // 忽略它会让 e2e 拿旧前端在测（曾经因此在报告里看见已经修过的旧提示文案）
   let newest = 0
   const walk = (d, depth) => {
     if (depth > 6) return
@@ -272,7 +274,49 @@ function needsBuild() {
   return ''
 }
 
+function newestFrontendSrc() {
+  let newest = newestMtime(join(ROOT, 'ui', 'src'))
+  const idx = join(ROOT, 'ui', 'index.html')
+  if (existsSync(idx)) newest = Math.max(newest, statSync(idx).mtimeMs)
+  return newest
+}
+
+function needsFrontendBuild() {
+  const dist = join(ROOT, 'internal', 'webui', 'dist')
+  if (!existsSync(join(dist, 'index.html'))) return '前端产物不存在'
+  if (newestFrontendSrc() > newestMtime(dist)) return 'ui/src 比前端产物新'
+  return ''
+}
+
+// 前端产物要先于后端构建：它被 go:embed 进二进制，前端旧了 e2e 测的就不是当前代码
+function buildFrontend() {
+  const reason = needsFrontendBuild()
+  if (!reason) {
+    check('1-构建', '复用已有前端产物（ui/src 与产物均未变新）', true, 'internal/webui/dist')
+    return
+  }
+  log(`  构建前端（原因：${reason}）…`)
+  const t0 = Date.now()
+  const r = spawnSync('npm', ['run', 'build'], { cwd: join(ROOT, 'ui'), shell: true, encoding: 'utf8' })
+  if (r.status !== 0) {
+    check(
+      '1-构建',
+      'npm run build（前端）',
+      false,
+      `${(r.stderr || r.stdout || '') + (r.error?.message ?? '')}`.slice(0, 600),
+    )
+    throw new Error('前端构建失败')
+  }
+  check(
+    '1-构建',
+    'npm run build（前端产物过期，已重建）',
+    true,
+    `${((Date.now() - t0) / 1000).toFixed(1)}s`,
+  )
+}
+
 function buildBackend() {
+  buildFrontend()
   const reason = FORCE_BUILD ? '--build 指定' : needsBuild()
   if (!reason) {
     check('1-构建', '复用已有 .test/ztnote.exe（源与产物均未变新）', true, EXE)

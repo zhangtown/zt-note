@@ -18,7 +18,7 @@
 | 11 | 表格编辑 | 思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格双向映射（`internal/siyuan/pm.go` 的 `tableToPM`/`pmTableToSy`、`model.go` 的 `TableRows`/`TableColumns`/`TableSpan`）；插入 3×3 + 浮动操作条；`colgroup`/对齐/合并单元格往返。证据：`internal/siyuan/table_test.go` 全绿（含“只有 `NodeTableHead` 的表格不能丢表头行”“未改动表格 sha 不变”），前端逻辑测试 34/34，浏览器 e2e 20 项表格断言全绿 |
 | 12 | 窄屏 / 手机适配 | 纯 CSS 媒体查询（≤720px）：侧栏改抽屉（`body.is-drawer-open` + `.drawer-mask`）、动作收进 ☰/⋯ 面板、目录行 38px / 工具条按钮 32px / 输入框 36px、搜索框与编辑区 ≥16px（免 iOS 聚焦缩放）、阅读与编辑区的表格 `display:block + overflow-x:auto` 自滚、编辑区 `calc(100dvh - 210px)`。新增 `ui/views/topbar.ts` 的 ☰/⋯ 与 `TopbarHandle.closePanels`。证据：e2e 第 13 节 25 项断言全绿（390×844 模拟手机，含“窄屏真插入表格并输入 → 保存后 `.sy` 是 NodeTable”、整页零横向溢出） |
 | 13 | 多用户隔离 + PIN 锁 | 每个飞牛账号一份工作区（`$TRIM_PKGVAR/users/<uid>/workspace`，`internal/users`）；旧单用户库首启自动迁给 `1000`（幂等）；6 位 PIN（PBKDF2-HMAC-SHA256 12 万次 + 每用户盐，`users/<uid>/pin.json`）+ `ztnote_session` Cookie（HttpOnly、30 天、绑 uid）；未解锁时数据接口一律 401（标题/正文/图片都不下发）；首次解锁送《我的笔记》+ 欢迎文档；入口改 `allUsers:true` | `go test ./...` 29 个用例全绿（新增 `internal/users/users_test.go` 7 个 + `internal/server/session_test.go` 8 个：身份头解析/路径穿越/PIN 哈希不含明文/连错 5 次锁 1 分钟/令牌绑 uid/过隔离与 401 门）；浏览器 e2e 153/153（含「PIN 屏→解锁→锁定→错码→换账号」23 项）；前端逻辑 34/34。实机核对 0.5.0（your-nas.local 走应用 socket）：`health` 报告 `users:1`；身份 `1000/zhangtown` → `hasLibrary:true`（旧库迁移成功）、陌生身份 `9999` → `hasLibrary:false`（隔离）、未解锁 `/api/tree` → 401 `{"error":"locked"}`；用户实测浏览器：设 PIN → 12 篇笔记与图片都在（即飞牛网关确实注入了 `X-Trim-Userid`） |
-| 14 | PIN 管理页（会话可见 + 撤销设备 + 闲置自动锁定） | `api/session` 增 `sessions`/`sessionExpiresAt`（`SessionManager.CountFor`/`Expires`，`DropUser` 开始返回注销数量）；新增 `POST api/pin/revoke`（作废该账号其它会话、本机换新令牌）；前端顶栏名字菜单新增「PIN 与安全…」面板——身份/本次解锁到期/已解锁设备/数据目录，自动锁定时长下拉（15/30/60/180/永不，存 `localStorage.zt.autolock.minutes`，默认 30 分钟），「修改 PIN」「撤销其它设备」「立即锁定」，以及「忘记 PIN」折叠指引（一键复制 `users/<uid>/pin.json` 路径）；新增 `ui/src/autolock.ts`（活动监听 + 闲置判定，纯函数可测）；到点自动锁定走 `api/pin/lock` 并提示「闲置太久，已自动上锁」 | `go test ./...` 31 个用例全绿（新增 `TestSessionCountAndExpiry`、`TestHTTPPinRevoke` 两个，PIN 门清单补 `/api/pin/revoke`）；前端逻辑 51/51（新增 17 项自动锁定用例）；浏览器 e2e 172/172（新增「3b-PIN管理」13 项：面板字段/5 档时长/localStorage 落盘/撤销后其它令牌 401/本机不受影响/菜单提示跟随设置） |
+| 14 | PIN 管理页（会话可见 + 撤销设备 + 闲置自动锁定） | `api/session` 增 `sessions`/`sessionExpiresAt`（`SessionManager.CountFor`/`Expires`，`DropUser` 开始返回注销数量）；新增 `POST api/pin/revoke`（作废该账号其它会话、本机换新令牌）；前端顶栏名字菜单新增「PIN 与安全…」面板——身份/本次解锁到期/已解锁设备/数据目录，自动锁定时长下拉（15/30/60/180/永不，存 `localStorage.zt.autolock.minutes`，默认 30 分钟），「修改 PIN」「撤销其它设备」「立即锁定」，以及「忘记 PIN」折叠指引（一键复制 `users/<uid>/pin.json` 路径）；新增 `ui/src/autolock.ts`（活动监听 + 闲置判定，纯函数可测）；到点自动锁定走 `api/pin/lock` 并提示「闲置太久，已自动上锁」 | `go test ./...` 31 个用例全绿（新增 `TestSessionCountAndExpiry`、`TestHTTPPinRevoke` 两个，PIN 门清单补 `/api/pin/revoke`）；前端逻辑 51/51（新增 17 项自动锁定用例）；浏览器 e2e 174/174（新增「3b-PIN管理」13 项：面板字段/5 档时长/localStorage 落盘/撤销后其它令牌 401/本机不受影响/菜单提示跟随设置；实机待验） |
 
 ## 待办
 
@@ -64,6 +64,10 @@
   git push --tags` 或跑 `release.yml` 的 workflow_dispatch
 - **`gh release upload` 的 `file#label` 只改显示标签，不改资源名**：想要带版本号的附件名
   （`zt-note_0.5.0.fpk`）得先把文件复制成那个名字再上传（`release.yml` 里已经踩过这个坑）
+- **e2e 一直在拿旧前端跑（已修）**：`ui/scripts/e2e-live.mjs` 的 `newestMtime()` 把 `dist` 当垃圾目录忽略了，而
+  `internal/webui/dist` 正是被 `go:embed` 进二进制的产物 —— 改完前端不重建二进制（复用了旧的）就直接拿旧 UI 断言，
+  会看到“已经改过的旧文案/旧行为”，白白排查一轮。现在：① `dist` 不再进忽略名单；② 跑 e2e 前会自动比较
+  `ui/src+ui/index.html` 与 `internal/webui/dist` 的 mtime，过期就先 `npm run build`（报告第 1 节会写明是复用还是重建）
 - **`cdp.clickElement(expr)` 收的是 JS 表达式不是 CSS 选择器**（自己写 UI 测试脚本时的坑）：
   传 `'.foo'` 会当成表达式报 `SyntaxError`，要传 `document.querySelector('.foo')`
 
