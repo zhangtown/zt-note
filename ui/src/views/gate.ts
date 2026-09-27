@@ -122,7 +122,7 @@ export function createGate(opts: GateOptions): HTMLElement {
     h(
       'div',
       {},
-      h('div', { class: 'gate-title' }, '云记笔记'),
+      h('div', { class: 'gate-title' }, '云栖笔记'),
       h('div', { class: 'gate-sub' }, '飞牛 NAS · 思源笔记格式'),
     ),
   )

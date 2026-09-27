@@ -162,7 +162,7 @@ CI（`.github/workflows/ci.yml`）：Go vet + 单测、前端类型检查/build/
 
 ## 品牌标识
 
-「云记笔记」标识是 `ui/src/logo.ts` 里的一段内联 SVG（与应用图标 `tools/mkicon` 同款：深蓝渐变圆角方块 + 白色书脊与纸页 + 蓝色文字线；
+「云栖笔记」标识是 `ui/src/logo.ts` 里的一段内联 SVG（与应用图标 `tools/mkicon` 同款：深蓝渐变圆角方块 + 白色书脊与纸页 + 蓝色文字线；
 矢量而非位图，任何尺寸清晰，不额外请求文件）。用到的地方：首页顶部（`views/home.ts`）、PIN 门（`views/gate.ts`）、
 启动失败页（`app.ts` 的 `bootError`），以及 favicon（`main.ts` 启动时 `applyFavicon()` 注入 data URI）。
 顶栏与侧栏都不再放 logo/品牌名（首页 hero 里已经有，重复）——顶栏的宽度留给目录按钮与搜索框，

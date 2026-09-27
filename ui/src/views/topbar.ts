@@ -45,7 +45,7 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
 
   /* ---- 窄屏：抽屉（☰）与动作面板（⋯） ----
      两个按钮只在 ≤900px 处可见（宽屏由 CSS 藏起来，断点定义在 styles.css 末尾一节）；
-     顶栏里不放品牌与 logo：回首页入口在侧栏顶部的「云记笔记」标识行（见 app.ts）。
+     顶栏里不放品牌与 logo：回首页入口在侧栏顶部的「云栖笔记」标识行（见 app.ts）。
      在这里也只是切 body 上的类，宽屏下没有副作用。 */
   const btnDrawer = h(
     'button',

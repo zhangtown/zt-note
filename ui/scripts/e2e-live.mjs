@@ -1524,11 +1524,11 @@ async function main() {
   ctx.hasTargetDoc = pageInfo.docs.includes(DOC_TITLE)
   ctx.version = pageInfo.version
 
-  check('3-页面', `document.title = ${JSON.stringify(pageInfo.title)}（含 云记笔记）`, /云记笔记/.test(pageInfo.title ?? ''), pageInfo.title)
+  check('3-页面', `document.title = ${JSON.stringify(pageInfo.title)}（含 云栖笔记）`, /云栖笔记/.test(pageInfo.title ?? ''), pageInfo.title)
   check('3-页面', '.shell / .topbar / .sidebar / .main 布局齐全', pageInfo.hasShell && pageInfo.hasTopbar && pageInfo.hasSidebar && pageInfo.hasMain, JSON.stringify({ shell: pageInfo.hasShell, topbar: pageInfo.hasTopbar, sidebar: pageInfo.hasSidebar, main: pageInfo.hasMain }))
-  check('3-品牌', `首页顶部是云记笔记标识（内联 SVG + 名字）：${JSON.stringify(pageInfo.homeBrand)}`, !!(pageInfo.homeBrand && pageInfo.homeBrand.svg) && /云记笔记/.test(pageInfo.homeBrand?.text ?? ''), JSON.stringify(pageInfo.homeBrand))
-  check('3-品牌', '侧栏不放品牌（首页 hero 已有标识）；只留「首页」导航项', !!pageInfo.sidebarNav && /首页/.test(pageInfo.sidebarNav.text) && pageInfo.sidebarBrand === null && !pageInfo.sidebarButtons.some((t) => t === '云记笔记'), JSON.stringify({ sidebarNav: pageInfo.sidebarNav, sidebarBrand: pageInfo.sidebarBrand, sidebarButtons: pageInfo.sidebarButtons }))
-  check('3-品牌', '「首页」导航项当前高亮（在首页），且顶栏没有品牌名', pageInfo.sidebarNav?.active === true && !/zt-note|云记笔记/.test(pageInfo.topbarText ?? ''), JSON.stringify({ nav: pageInfo.sidebarNav, topbarText: pageInfo.topbarText }))
+  check('3-品牌', `首页顶部是云栖笔记标识（内联 SVG + 名字）：${JSON.stringify(pageInfo.homeBrand)}`, !!(pageInfo.homeBrand && pageInfo.homeBrand.svg) && /云栖笔记/.test(pageInfo.homeBrand?.text ?? ''), JSON.stringify(pageInfo.homeBrand))
+  check('3-品牌', '侧栏不放品牌（首页 hero 已有标识）；只留「首页」导航项', !!pageInfo.sidebarNav && /首页/.test(pageInfo.sidebarNav.text) && pageInfo.sidebarBrand === null && !pageInfo.sidebarButtons.some((t) => t === '云栖笔记'), JSON.stringify({ sidebarNav: pageInfo.sidebarNav, sidebarBrand: pageInfo.sidebarBrand, sidebarButtons: pageInfo.sidebarButtons }))
+  check('3-品牌', '「首页」导航项当前高亮（在首页），且顶栏没有品牌名', pageInfo.sidebarNav?.active === true && !/zt-note|云栖笔记/.test(pageInfo.topbarText ?? ''), JSON.stringify({ nav: pageInfo.sidebarNav, topbarText: pageInfo.topbarText }))
   check('3-页面', '顶栏版本号来自真实后端 health（不是「连接中…」）', /^v/.test(pageInfo.version ?? ''), `version 区文案=${JSON.stringify(pageInfo.version)}`)
   check('3-树', `文档树渲染 ${EXPECT_BOXES} 个笔记本且含 ${SAMPLE_BOXES.join(' / ')} / ${WELCOME_BOX}`, pageInfo.notebooks.length === EXPECT_BOXES && SAMPLE_BOXES.every((b) => pageInfo.notebooks.includes(b)) && pageInfo.notebooks.includes(WELCOME_BOX), JSON.stringify(pageInfo.notebooks))
   check('3-树', `笔记本展开后渲染 ${EXPECT_DOCS} 个文档条目且含《${DOC_TITLE}》（含首次进入的欢迎文档）`, pageInfo.docs.length === EXPECT_DOCS && pageInfo.docs.includes(DOC_TITLE), `${pageInfo.docs.length} 条：${pageInfo.docs.slice(0, 14).join('、')}`)

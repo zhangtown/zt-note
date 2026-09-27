@@ -1,7 +1,7 @@
 {
   ".url": {
     "zt-note.main": {
-      "title": "云记笔记",
+      "title": "云栖笔记",
       "icon": "images/icon_{0}.png",
       "type": "iframe",
       "protocol": "",

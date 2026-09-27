@@ -14,7 +14,7 @@ import (
 // 并在用户目录里留一个标记文件，之后不再重复创建。
 const (
 	onboardMarker   = ".onboarded"
-	welcomeTitle    = "欢迎使用云记笔记"
+	welcomeTitle    = "欢迎使用云栖笔记"
 	welcomeNotebook = "我的笔记"
 )
 

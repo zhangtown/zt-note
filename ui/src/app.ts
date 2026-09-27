@@ -91,7 +91,7 @@ function bootError(err: unknown, retry: () => void): HTMLElement {
         h(
           'div',
           {},
-          h('div', { class: 'gate-title' }, '云记笔记'),
+          h('div', { class: 'gate-title' }, '云栖笔记'),
           h('div', { class: 'gate-sub' }, '飞牛 NAS · 思源笔记格式'),
         ),
       ),
@@ -407,7 +407,7 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     await openSession(app)
   }
 
-  /* 侧栏顶部不放品牌（首页 hero 已经有「云记笔记」标识，重复），
+  /* 侧栏顶部不放品牌（首页 hero 已经有「云栖笔记」标识，重复），
      只放一个「首页」导航项：顶栏没有品牌之后，它是唯一的回首页入口，
      窄屏时就在抽屉最上方，点得到。 */
   const homeNav = h(

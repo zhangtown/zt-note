@@ -156,7 +156,7 @@ export async function mountDoc(
           await api.renameDoc(params.box, params.id, next)
           doc.title = next
           titleEl.textContent = next
-          document.title = `${next} · 云记笔记`
+          document.title = `${next} · 云栖笔记`
           toast('标题已修改', 'ok')
           await ctx.refreshTree()
         } catch (err) {

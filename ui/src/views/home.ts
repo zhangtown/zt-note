@@ -24,7 +24,7 @@ export function mountHome(
         h(
           'div',
           {},
-          h('h1', { class: 'home-title' }, '云记笔记'),
+          h('h1', { class: 'home-title' }, '云栖笔记'),
           h('div', { class: 'home-tagline muted' }, '飞牛 NAS · 思源笔记格式'),
         ),
       ),

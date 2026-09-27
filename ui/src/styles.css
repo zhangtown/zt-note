@@ -147,7 +147,7 @@ a {
   margin: 0 3px;
 }
 
-/* 云记笔记标识（SVG 由 src/logo.ts 生成） */
+/* 云栖笔记标识（SVG 由 src/logo.ts 生成） */
 .logo-mark {
   display: inline-flex;
   flex: none;
@@ -468,7 +468,7 @@ a {
   letter-spacing: 0.3px;
 }
 
-/* 首页顶部：云记笔记标识 + 名字（顶栏不再放 logo，这里就是它在页面里的位置） */
+/* 首页顶部：云栖笔记标识 + 名字（顶栏不再放 logo，这里就是它在页面里的位置） */
 .home-brand {
   display: flex;
   align-items: center;

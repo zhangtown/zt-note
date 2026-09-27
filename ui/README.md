@@ -35,7 +35,7 @@ ui/
 ├── vite.config.ts        # base './'、outDir ../internal/webui/dist、dev proxy /api + /assets
 ├── src/
 │   ├── main.ts           # 入口：启动 + 启动失败的兜底错误页
-│   ├── logo.ts           # 「云记笔记」标识（内联 SVG，与应用图标同款：深蓝方块 + 白页 + 蓝线）
+│   ├── logo.ts           # 「云栖笔记」标识（内联 SVG，与应用图标同款：深蓝方块 + 白页 + 蓝线）
 │   ├── app.ts            # 布局装配（侧栏顶部「🏠 首页」、顶栏不放品牌）、路由分发、全局动作
 │   ├── api.ts            # fetch 封装（统一 {ok:false,error} 解析 + 内置令牌） + 相对路径 api/* + 导出 URL
 │   ├── router.ts         # hash 路由 #/ 、#/doc/<box>/<id>?mode=&block= 、#/search?q= 、#/import

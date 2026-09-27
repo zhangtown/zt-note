@@ -48,7 +48,7 @@ sudo appcenter-cli install-local -d ~/zt-pkg -v 1   # 首次安装和升级都�
 # 或者：sudo appcenter-cli install-fpk /tmp/zt-note.fpk   # 仅首次安装（应用不存在时）
 ```
 
-装完在应用中心打开「云记笔记」（`zt-note`）。应用入口 `allUsers:false`，
+装完在应用中心打开「云栖笔记」（`zt-note`）。应用入口 `allUsers:false`，
 当前只有管理员能看到；写操作要求网关注入的 `X-Trim-Isadmin: true`。
 
 > NAS 的地址、账号、sudo 密码等凭据**不要写进仓库**，放在自己的密码管理器/本地备忘里。
@@ -61,7 +61,7 @@ sudo appcenter-cli install-local -d ~/zt-pkg -v 1   # 首次安装和升级都�
 | 工作区（笔记数据） | `$TRIM_PKGVAR/workspace` → `/vol1/@appdata/zt-note/workspace` |
 | 数据文件 | `.../workspace/data/<boxID>/<docID>.sy`、`.../workspace/data/assets/` |
 | 网关 socket | `$TRIM_APPDEST/app.sock`（app.sock 存在即网关模式） |
-| 日志 | 应用中心 → 云记笔记 → 日志；或 `/vol1/@appdata/zt-note/…` 下 |
+| 日志 | 应用中心 → 云栖笔记 → 日志；或 `/vol1/@appdata/zt-note/…` 下 |
 
 启动参数（一般不用改，走环境变量默认值）：
 `-workspace`、`-addr`（TCP 调试）、`-sock`、`-prefix`（默认 `$GATEWAY_PREFIX` 或 `/app/zt-note`）。

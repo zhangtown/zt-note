@@ -70,5 +70,5 @@ for u in \$(curl -s --unix-socket \$SOCK http://localhost/ | grep -oE '(src|href
   curl -s --unix-socket \$SOCK -o /dev/null -w \"  静态资源 \$u -> %{http_code} %{content_type} %{size_download}B\n\" \"http://localhost/\${u#./}\"
 done"
 echo
-echo "== 完成：desktop 打开「云记笔记」，或应用中心 → 云记笔记"
+echo "== 完成：desktop 打开「云栖笔记」，或应用中心 → 云栖笔记"
 echo "   数据目录（笔记本体）: /usr/local/apps/@appdata/zt-note/workspace"

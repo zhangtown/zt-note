@@ -4,7 +4,7 @@ import { bootstrap } from './app'
 import { applyFavicon } from './logo'
 
 function start(): void {
-  // 标签页图标就是云记笔记标识（与页面内的 logo 同源）
+  // 标签页图标就是云栖笔记标识（与页面内的 logo 同源）
   applyFavicon()
   try {
     bootstrap()

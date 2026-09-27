@@ -1,5 +1,5 @@
 #!/bin/sh
-# fnOS app lifecycle for zt-note (云记笔记).
+# fnOS app lifecycle for zt-note (云栖笔记).
 #
 # The Go binary serves HTTP over a unix socket ($TRIM_APPDEST/app.sock);
 # the fnOS unified gateway proxies /app/zt-note to it. No TCP port is used.

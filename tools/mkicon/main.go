@@ -1,4 +1,4 @@
-// Command mkicon 生成「云记笔记」应用图标（深蓝圆角方块 + 笔记本页）。
+// Command mkicon 生成「云栖笔记」应用图标（深蓝圆角方块 + 笔记本页）。
 //
 // 4x 超采样后降采样，得到边缘干净的两套 PNG：64px 与 256px。
 // 用法：go run ./tools/mkicon -out deploy/fnos-app/zt-note

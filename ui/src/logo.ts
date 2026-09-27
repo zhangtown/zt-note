@@ -1,4 +1,4 @@
-// 「云记笔记」标识：与 tools/mkicon 生成的应用图标同款
+// 「云栖笔记」标识：与 tools/mkicon 生成的应用图标同款
 // ——深蓝渐变圆角方块 + 白色装订脊 + 白页 + 蓝色文字线。
 //
 // 手写 SVG，任意尺寸都清晰；PIN 门、启动错误屏、首页、侧栏、favicon 都从这里取，
@@ -37,7 +37,7 @@ export function logoDataUri(size = 64): string {
   return `data:image/svg+xml,${encodeURIComponent(logoSvg(size))}`
 }
 
-/** 把标签页图标换成云记笔记标识（浏览器打开时生效）。 */
+/** 把标签页图标换成云栖笔记标识（浏览器打开时生效）。 */
 export function applyFavicon(): void {
   document.head.querySelectorAll('link[rel~="icon"]').forEach((el) => el.remove())
   const link = document.createElement('link')
