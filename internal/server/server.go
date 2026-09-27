@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -79,6 +80,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/doc/rename", s.write(s.handleDocRename))
 	mux.HandleFunc("/api/doc/delete", s.write(s.handleDocDelete))
 	mux.HandleFunc("/api/notebook/create", s.write(s.handleNotebookCreate))
+	mux.HandleFunc("/api/notebook/rename", s.write(s.handleNotebookRename))
+	mux.HandleFunc("/api/notebook/delete", s.write(s.handleNotebookDelete))
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/import/upload", s.write(s.handleImportUpload))
 	mux.HandleFunc("/api/import/path", s.write(s.handleImportPath))
@@ -453,10 +456,55 @@ func (s *Server) handleNotebookCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := st.CreateNotebook(body.Name)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, err.Error())
+		failNotebook(w, err)
 		return
 	}
 	ok(w, map[string]any{"id": id, "name": body.Name})
+}
+
+func (s *Server) handleNotebookRename(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if body.ID == "" {
+		fail(w, http.StatusBadRequest, "缺少 id")
+		return
+	}
+	st := s.store(w, r)
+	if st == nil {
+		return
+	}
+	if err := st.RenameNotebook(body.ID, body.Name); err != nil {
+		failNotebook(w, err)
+		return
+	}
+	ok(w, map[string]any{"id": body.ID, "name": body.Name})
+}
+
+func (s *Server) handleNotebookDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if body.ID == "" {
+		fail(w, http.StatusBadRequest, "缺少 id")
+		return
+	}
+	st := s.store(w, r)
+	if st == nil {
+		return
+	}
+	if err := st.DeleteNotebook(body.ID); err != nil {
+		failNotebook(w, err)
+		return
+	}
+	ok(w, map[string]any{"deleted": body.ID})
 }
 
 // ---------------------------------------------------------------- 导入导出
@@ -651,6 +699,19 @@ func fail(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": msg})
+}
+
+// failNotebook 把笔记本操作的错误分类型落到状态码上：
+// 参数不合法 400、笔记本找不到 404、其余 500（前端只管显示 error 文本）。
+func failNotebook(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrBadBoxID), errors.Is(err, store.ErrEmptyNotebookName):
+		fail(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, store.ErrNotebookAbsent):
+		fail(w, http.StatusNotFound, err.Error())
+	default:
+		fail(w, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

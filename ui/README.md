@@ -36,19 +36,20 @@ ui/
 ├── src/
 │   ├── main.ts           # 入口：启动 + 启动失败的兜底错误页
 │   ├── logo.ts           # 「云记笔记」标识（内联 SVG，与应用图标同款：深蓝方块 + 白页 + 蓝线）
-│   ├── app.ts            # 布局装配（含侧栏顶部品牌行 / 回首页）、路由分发、全局动作
-│   ├── api.ts            # fetch 封装（统一 {ok:false,error} 解析）+ 相对路径 api/* + 导出 URL
+│   ├── app.ts            # 布局装配（侧栏顶部「🏠 首页」、顶栏不放品牌）、路由分发、全局动作
+│   ├── api.ts            # fetch 封装（统一 {ok:false,error} 解析 + 内置令牌） + 相对路径 api/* + 导出 URL
 │   ├── router.ts         # hash 路由 #/ 、#/doc/<box>/<id>?mode=&block= 、#/search?q= 、#/import
 │   ├── store.ts          # 极简状态：文档树、健康信息、当前选中项、树展开（localStorage）
 │   ├── types.ts          # 与 API.md 对应的类型
 │   ├── dom.ts            # h() DOM 工具 + 弹窗/确认/输入/轻提示/状态块
 │   ├── docjson.ts        # 块模型：sanitizeBlocks（schema 对齐降级）、planSave（LCS 对齐 + changed 标记）
-│   ├── editor.ts         # TipTap 编辑器（工具条、代码块语言、链接/图片弹窗、图片上传）
+│   ├── editor.ts         # TipTap 编辑器（工具条、代码块语言、链接/图片弹窗、图片上传、正文右键菜单、块高亮装饰器）
 │   ├── styles.css        # 手写样式（浅色、紧凑、中文字体栈；末尾一节是 ≤900px 窄屏规则）
 │   └── views/
-│       ├── tree.ts       # 左侧文档树（笔记本 → 文档，children 递归，展开状态持久化）
+│       ├── tree.ts       # 左侧文档树（笔记本 → 文档，children 递归，展开状态持久化，右键菜单）
+│       ├── menu.ts       # 通用右键/下拉菜单（.ctx-menu，笔记本与文档共用）
 │       ├── topbar.ts     # 顶栏（不放品牌；新建/重命名/删除/导入/导出菜单/搜索框/后端版本）
-│       ├── doc.ts        # 文档视图：阅读（后端 html）/ 编辑（TipTap）+ 保存 + 搜索块高亮
+│       ├── doc.ts        # 文档视图：只读文档走后端 html，其余打开即编辑（自动保存、状态行、标题就地改、搜索块高亮）
 │       ├── search.ts     # 搜索结果列表（标题/片段高亮，点击跳文档）
 │       ├── import.ts     # 导入向导（zip 上传 / 服务器目录）
 │       └── home.ts       # 首页空态
@@ -62,7 +63,13 @@ ui/
 
 - **品牌标识**：只此一处 `src/logo.ts`（`logoSvg` / `logoMark(size)` / `logoDataUri` / `applyFavicon`，配 `.logo-mark` 类），
   与应用图标 `tools/mkicon` 同款；favicon 是 `main.ts` 启动时注入的 data URI。
-  顶栏不放品牌，回首页靠侧栏顶部的品牌行（`app.ts` 的 `.sidebar-brand`）。
+  顶栏与侧栏都不放品牌（首页 hero 已有），回首页靠侧栏顶部的「🏠 首页」行（`app.ts` 的 `.tree-nav-item`）。
+
+- **打开即编辑 + 自动保存**：文档只说“编辑模式”（没有单独的“查看模式开关”），改动停下约 0.9s 写盘
+  （`views/doc.ts` 的 `IDLE_MS` / `MIN_GAP_MS` / `MAX_DELAY_MS`），页头状态行显示已保存 / 保存中 / 失败；
+  只读文档（后端标了 readonly）不挂编辑器，仍走后端渲染的 html。
+- **块高亮用装饰器**：搜索定位到块时不要手改编辑器 DOM（ProseMirror 重绘会抹掉），
+  走 `editor.ts` 的 `flashPlugin`（`DecorationSet`，`revealBlock()` dispatch 一个带 `ztnote-flash` meta 的 transaction）。
 
 - **相对路径**：页面可能挂在 `/app/zt-note/` 下，所有请求写 `fetch('api/tree')`、图片写 `assets/xx.png`，
   绝不写 `/api/...`。路由用 hash，所以文档 URL 的目录部分不变，相对路径始终解析到网关前缀。

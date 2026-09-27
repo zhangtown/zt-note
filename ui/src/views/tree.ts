@@ -3,6 +3,7 @@ import type { DocNode, Notebook } from '../types'
 import { api } from '../api'
 import { ancestorsOf, expanded, store } from '../store'
 import { clear, emptyBox, errorBox, h, spinner } from '../dom'
+import { attachLongPress, openMenu, openMenuAt, type MenuItem } from './menu'
 
 export interface TreeHandle {
   element: HTMLElement
@@ -14,10 +15,27 @@ export interface TreeHandle {
 interface TreeOptions {
   onSelectDoc: (box: string, id: string) => void
   onSelectBox: (box: string) => void
+  /** 右键 / 长按 / ⋯ 菜单选中的动作，由 app.ts 执行（确认框 + 调接口 + 刷新） */
+  onAction: (action: TreeAction) => void
 }
 
-/** 已经自动展开过的笔记本（避免把用户手动收起的又展开） */
+/** 文档树上的菜单动作 */
+export type TreeAction =
+  | { kind: 'new-doc'; box: string; parentId?: string }
+  | { kind: 'rename-doc'; box: string; id: string; title: string }
+  | { kind: 'delete-doc'; box: string; id: string; title: string }
+  | { kind: 'rename-box'; box: string; name: string }
+  | { kind: 'delete-box'; box: string; name: string; count: number }
+
+/** 已自动展开过的笔记本（避免把用户手动收起的又展开） */
 const autoExpanded = new Set<string>()
+
+/** 新建笔记时把笔记本记下来：新建成功后要展开它，否则新笔记看不见 */
+
+export function rememberExpanded(box: string): void {
+  autoExpanded.add(box)
+  expanded.add(`box:${box}`)
+}
 
 function countDocs(docs: DocNode[]): number {
   let n = 0
@@ -26,6 +44,73 @@ function countDocs(docs: DocNode[]): number {
     if (doc.children?.length) n += countDocs(doc.children)
   }
   return n
+}
+
+/** 挂在行上的「⋯」按钮 + 右键 + 长按，三种入口都开同一个菜单。 */
+function attachMenu(
+  row: HTMLElement,
+  items: () => MenuItem[],
+  opts: { more?: boolean } = {},
+): HTMLElement {
+  const open = (x: number, y: number) => {
+    openMenu(x, y, items())
+  }
+  row.addEventListener('contextmenu', (e: MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    open(e.clientX, e.clientY)
+  })
+  attachLongPress(row, open)
+
+  const more = h('button', {
+    class: 'tree-more',
+    type: 'button',
+    title: '更多操作（右键也可以）',
+    'aria-label': '更多操作',
+    tabindex: -1,
+  }, '⋯')
+  more.addEventListener('click', (e: Event) => {
+    e.preventDefault()
+    e.stopPropagation()
+    openMenuAt(more, items())
+  })
+  if (opts.more === false) more.classList.add('is-hidden')
+  return more
+}
+
+function docMenuItems(box: string, doc: DocNode, opts: TreeOptions): MenuItem[] {
+  return [
+    {
+      label: '新建笔记',
+      icon: '📝',
+      onClick: () => opts.onAction({ kind: 'new-doc', box, parentId: doc.id }),
+    },
+    {
+      label: '重命名',
+      icon: '✏️',
+      onClick: () => opts.onAction({ kind: 'rename-doc', box, id: doc.id, title: doc.title }),
+    },
+    {
+      label: '删除',
+      icon: '🗑️',
+      danger: true,
+      onClick: () => opts.onAction({ kind: 'delete-doc', box, id: doc.id, title: doc.title }),
+    },
+  ]
+}
+
+function boxMenuItems(nb: Notebook, opts: TreeOptions): MenuItem[] {
+  return [
+    { label: '新建笔记', icon: '📝', onClick: () => opts.onAction({ kind: 'new-doc', box: nb.id }) },
+    { label: '重命名笔记本', icon: '✏️', onClick: () => opts.onAction({ kind: 'rename-box', box: nb.id, name: nb.name }) },
+    {
+      label: '删除笔记本',
+      icon: '🗑️',
+      danger: true,
+      onClick: () =>
+        opts.onAction({ kind: 'delete-box', box: nb.id, name: nb.name, count: countDocs(nb.docs) }),
+    },
+  ]
 }
 
 function docRow(
@@ -71,6 +156,7 @@ function docRow(
     h('span', { class: 'tree-icon' }, '📄'),
     h('span', { class: 'tree-label' }, doc.title || '(无标题)'),
   )
+  row.appendChild(attachMenu(row, () => docMenuItems(box, doc, opts)))
 
   const wrap = h('div', { class: 'tree-doc-wrap' }, row)
   if (open) {
@@ -101,6 +187,7 @@ function notebookBlock(nb: Notebook, opts: TreeOptions, onRerender: () => void):
     h('span', { class: 'tree-label' }, nb.name || nb.id),
     h('span', { class: 'tree-count' }, String(countDocs(nb.docs))),
   )
+  row.appendChild(attachMenu(row, () => boxMenuItems(nb, opts)))
   const wrap = h('div', { class: 'tree-notebook-wrap' }, row)
   if (open) {
     if (!nb.docs.length) {

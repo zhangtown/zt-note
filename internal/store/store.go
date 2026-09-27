@@ -3,6 +3,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,6 +89,15 @@ type Hit struct {
 
 // ---------------------------------------------------------------- 笔记本
 
+// reservedDir 判断 data 目录下的系统目录（不当作笔记本，也不允许删）。
+func reservedDir(name string) bool {
+	switch name {
+	case "assets", "templates", "storage", "widgets", "plugins", "emojis":
+		return true
+	}
+	return strings.HasPrefix(name, ".")
+}
+
 // Notebooks 返回全部笔记本与文档树。
 func (s *Store) Notebooks() ([]*Notebook, error) {
 	entries, err := os.ReadDir(s.DataDir())
@@ -103,8 +113,7 @@ func (s *Store) Notebooks() ([]*Notebook, error) {
 			continue
 		}
 		name := e.Name()
-		if name == "assets" || name == "templates" || name == "storage" || name == "widgets" ||
-			name == "plugins" || name == "emojis" || strings.HasPrefix(name, ".") {
+		if reservedDir(name) {
 			continue
 		}
 		dir := filepath.Join(s.DataDir(), name)
@@ -434,6 +443,16 @@ func (s *Store) Delete(box, id string) error {
 	return nil
 }
 
+// 笔记本操作的错误分类：HTTP 层用 errors.Is 映射状态码，不去解析错误文本。
+var (
+	// ErrBadBoxID 不是合法的笔记本 id（空、带分隔符、系统目录、隐藏目录）
+	ErrBadBoxID = errors.New("非法笔记本 id")
+	// ErrNotebookAbsent 目录不存在或不是目录
+	ErrNotebookAbsent = errors.New("笔记本不存在")
+	// ErrEmptyNotebookName 改名成空名字
+	ErrEmptyNotebookName = errors.New("笔记本名不能为空")
+)
+
 // CreateNotebook 新建笔记本（思源目录约定：<boxID>/.siyuan/conf.json）。
 func (s *Store) CreateNotebook(name string) (string, error) {
 	if strings.TrimSpace(name) == "" {
@@ -450,6 +469,58 @@ func (s *Store) CreateNotebook(name string) (string, error) {
 		return "", err
 	}
 	return id, nil
+}
+
+// RenameNotebook 修改笔记本名（写进 <box>/.siyuan/conf.json 的 name，思源自己读的也是它）。
+func (s *Store) RenameNotebook(box, name string) error {
+	if box == "" || reservedDir(box) || strings.ContainsAny(box, "/\\") {
+		return fmt.Errorf("%w: %s", ErrBadBoxID, box)
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ErrEmptyNotebookName
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := filepath.Join(s.DataDir(), box)
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return fmt.Errorf("%w: %s", ErrNotebookAbsent, box)
+	}
+	confDir := filepath.Join(dir, ".siyuan")
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		return err
+	}
+	conf := filepath.Join(confDir, "conf.json")
+	m := map[string]any{}
+	if raw, err := os.ReadFile(conf); err == nil {
+		_ = json.Unmarshal(raw, &m)
+		if m == nil {
+			m = map[string]any{}
+		}
+	}
+	m["name"] = name
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(conf, raw, 0o644)
+}
+
+// DeleteNotebook 删除笔记本（连同其中的文档目录）。
+// 只允许删 data 下的真实笔记本目录：assets/templates 等系统目录一律拒绝，
+// 免得把图片资源或工作区根目录删掉。
+func (s *Store) DeleteNotebook(box string) error {
+	if box == "" || reservedDir(box) || strings.ContainsAny(box, "/\\") {
+		return fmt.Errorf("%w: %s", ErrBadBoxID, box)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := filepath.Join(s.DataDir(), box)
+	st, err := os.Stat(dir)
+	if err != nil || !st.IsDir() {
+		return fmt.Errorf("%w: %s", ErrNotebookAbsent, box)
+	}
+	return os.RemoveAll(dir)
 }
 
 // EnsureNotebook 确保笔记本存在（导入时用），返回 box id。

@@ -3,6 +3,9 @@ import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
+import { Extension } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { JSONContent } from '@tiptap/core'
 import { ImageWithLayout } from './image-ext'
 import { tableExtensions } from './table-ext'
@@ -10,6 +13,7 @@ import type { Block, SaveBlock } from './types'
 import { pinAssetTokens, apiUpload } from './api'
 import { isDirty, planSave, sanitizeBlocks, stableStringify } from './docjson'
 import { h, showModal, toast, type ModalButton } from './dom'
+import { openMenu, type MenuItem } from './views/menu'
 
 const LANGUAGE_SUGGESTIONS = [
   'go', 'javascript', 'typescript', 'python', 'java', 'c', 'cpp', 'csharp',
@@ -30,6 +34,18 @@ export interface EditorHandle {
   getBlocks: () => SaveBlock[]
   isSaving: () => boolean
   setSaving: (value: boolean) => void
+  /** 保存成功后调用：把「已保存」基准挪到当前内容（脏标记归零） */
+  /**
+   * 保存成功后复位「已保存」基准。
+   * - `sent`：本次真正发出去的块（用它当基准，而不是当前内容——请求在途时用户可能又打了字，
+   *   那些字还没存过，不能算已保存）
+   * - `saved`：服务端回填的权威块表（新建块的真实 id 在这里），不更新的话新块每次保存都会换 id
+   */
+  markSaved: (sent?: SaveBlock[], saved?: Block[]) => void
+  /** 定位到某个块（搜索结果跳转）：滚过去并闪一下，找不到返回 false */
+  revealBlock: (blockId: string) => boolean
+  /** 当前内容里有多少个编辑器看不懂的块（>0 时页头提示可「原样预览」） */
+  unsupported: () => number
   destroy: () => void
 }
 
@@ -40,6 +56,143 @@ interface ToolItem {
   run: (editor: Editor) => void
   active?: (editor: Editor) => boolean
 }
+
+/** 正文右键菜单的条目定义：图标列用工具条上的短标签，文字用中文名，右侧给快捷键。 */
+const CTX_ITEMS: Record<string, { label: string; hint?: string }> = {
+  undo: { label: '撤销', hint: 'Ctrl+Z' },
+  redo: { label: '重做', hint: 'Ctrl+Shift+Z' },
+  bold: { label: '加粗', hint: 'Ctrl+B' },
+  italic: { label: '斜体', hint: 'Ctrl+I' },
+  strike: { label: '删除线' },
+  code: { label: '行内代码', hint: 'Ctrl+E' },
+  h1: { label: '一级标题', hint: 'Ctrl+Alt+1' },
+  h2: { label: '二级标题', hint: 'Ctrl+Alt+2' },
+  h3: { label: '三级标题', hint: 'Ctrl+Alt+3' },
+  bulletList: { label: '无序列表', hint: 'Ctrl+Shift+8' },
+  orderedList: { label: '有序列表', hint: 'Ctrl+Shift+7' },
+  blockquote: { label: '引用', hint: 'Ctrl+Shift+B' },
+  codeBlock: { label: '代码块', hint: 'Ctrl+Alt+C' },
+  horizontalRule: { label: '分隔线' },
+  link: { label: '插入 / 修改链接', hint: 'Ctrl+K' },
+  image: { label: '插入图片' },
+  table: { label: '插入表格' },
+}
+
+/** 正文右键菜单：常用格式 + 剪贴板 + 撤销重做（表格里再多一排表格操作）。 */
+function buildContextMenu(editor: Editor): MenuItem[] {
+  const toolOf = (id: string) => TOOLS.find((t) => t !== 'sep' && t.id === id) as ToolItem | undefined
+  const item = (id: string): MenuItem | null => {
+    const tool = toolOf(id)
+    const meta = CTX_ITEMS[id]
+    if (!tool || !meta) return null
+    return {
+      icon: tool.label,
+      label: meta.label,
+      hint: meta.hint,
+      onClick: () => {
+        tool.run(editor)
+        editor.commands.focus()
+      },
+    }
+  }
+  const items: MenuItem[] = []
+  const push = (entry: MenuItem | null) => {
+    if (entry) items.push(entry)
+  }
+
+  push(item('undo'))
+  push(item('redo'))
+  items.push({ separator: true })
+  push({
+    icon: '✂️',
+    label: '剪切',
+    hint: 'Ctrl+X',
+    onClick: () => {
+      editor.commands.focus()
+      document.execCommand('cut')
+    },
+  })
+  push({
+    icon: '📋',
+    label: '复制',
+    hint: 'Ctrl+C',
+    onClick: () => {
+      editor.commands.focus()
+      document.execCommand('copy')
+    },
+  })
+  push({
+    icon: '📥',
+    label: '粘贴',
+    hint: 'Ctrl+V',
+    onClick: () => void pasteFromClipboard(editor),
+  })
+  push({
+    icon: '🔤',
+    label: '全选',
+    hint: 'Ctrl+A',
+    onClick: () => editor.chain().focus().selectAll().run(),
+  })
+  items.push({ separator: true })
+  for (const id of ['bold', 'italic', 'strike', 'code']) push(item(id))
+  items.push({ separator: true })
+  for (const id of ['h1', 'h2', 'h3']) push(item(id))
+  items.push({ separator: true })
+  for (const id of ['bulletList', 'orderedList', 'blockquote', 'codeBlock', 'horizontalRule']) push(item(id))
+  items.push({ separator: true })
+  for (const id of ['link', 'image', 'table']) push(item(id))
+
+  if (editor.isActive('table')) {
+    items.push({ separator: true })
+    for (const action of TABLE_ACTIONS) {
+      items.push({
+        icon: '▦',
+        label: action.title,
+        onClick: () => {
+          action.run(editor)
+          editor.commands.focus()
+        },
+      })
+    }
+  }
+  return items
+}
+
+/** 读剪贴板并插入（浏览器不给权限时就提示用 Ctrl+V）。 */
+async function pasteFromClipboard(editor: Editor): Promise<void> {
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text) editor.chain().focus().insertContent(text).run()
+  } catch {
+    toast('浏览器不允许读剪贴板，请用 Ctrl+V 粘贴', 'error')
+  }
+}
+
+// 搜索定位高亮：装饰器由 ProseMirror 管理，重绘不会把它抹掉（直接改 DOM 属性则会被节点替换丢掉）
+const FLASH_META = 'ztnote-flash'
+const flashPlugin: Plugin<DecorationSet> = new Plugin<DecorationSet>({
+  key: new PluginKey('ztnote-flash'),
+  state: {
+    init: () => DecorationSet.empty,
+    apply(tr, old) {
+      const meta = tr.getMeta(FLASH_META)
+      if (meta === null) return DecorationSet.empty
+      if (meta instanceof DecorationSet) return meta.map(tr.mapping, tr.doc)
+      return old.map(tr.mapping, tr.doc)
+    },
+  },
+  props: {
+    decorations(state) {
+      return this.getState(state)
+    },
+  },
+})
+
+// TipTap 的 extensions 只吃 Extension/Node/Mark，原生 PM 插件要包一层
+const FlashExtension = Extension.create({
+  name: 'ztnoteFlash',
+  addProseMirrorPlugins: () => [flashPlugin],
+})
 
 const TOOLS: Array<ToolItem | 'sep'> = [
   {
@@ -337,7 +490,7 @@ async function insertImage(editor: Editor): Promise<void> {
   }
 }
 
-export function createEditor(opts: { blocks: Block[] }): EditorHandle {
+export function createEditor(opts: { blocks: Block[]; onChange?: () => void }): EditorHandle {
   const toolbar = h('div', { class: 'zt-toolbar' })
   const editorHost = h('div', { class: 'zt-editor-body' })
   const foot = h('div', { class: 'zt-editor-foot' })
@@ -389,6 +542,7 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
       ImageWithLayout.configure({ inline: true, allowBase64: false, HTMLAttributes: { class: 'zt-image' } }),
       Placeholder.configure({ placeholder: '开始输入…' }),
       ...tableExtensions(),
+      FlashExtension,
     ],
     content: { type: 'doc', content: [] },
     editorProps: {
@@ -423,8 +577,13 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
     .setMeta('addToHistory', false)
     .run()
 
-  const initialKey = stableStringify(editor.getJSON().content ?? [])
+  let initialKey = stableStringify(editor.getJSON().content ?? [])
   let saving = false
+
+  // 内容变了就叫一声（doc.ts 用它做防抖自动保存）
+  if (opts.onChange) {
+    editor.on('update', () => opts.onChange?.())
+  }
 
   const buttons = new Map<string, HTMLButtonElement>()
   for (const item of TOOLS) {
@@ -473,6 +632,7 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
   }
 
   let langTimer = 0
+  let flashTimer = 0
   const commitLang = () => {
     const value = langInput.value.trim()
     editor.chain().focus().updateAttributes('codeBlock', { language: value || null }).run()
@@ -514,6 +674,14 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
   editor.on('selectionUpdate', refresh)
   refresh()
 
+  // 正文右键菜单：先把光标挪到点击处（否则格式操作会作用在旧位置），再弹常用命令
+  editorHost.addEventListener('contextmenu', (e: MouseEvent) => {
+    const pos = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })?.pos
+    if (typeof pos === 'number') editor.commands.setTextSelection(pos)
+    e.preventDefault()
+    openMenu(e.clientX, e.clientY, buildContextMenu(editor))
+  })
+
   // 图片地址补上会话令牌（Cookie 被飞牛 App 的 WebView 拦掉时，粘贴进来的图也能立刻显示）；
   // 只改 DOM，不改文档内容，存盘时 api.saveDoc 还会再清一道。
   pinAssetTokens(editorHost, true)
@@ -526,8 +694,55 @@ export function createEditor(opts: { blocks: Block[] }): EditorHandle {
     setSaving: (value: boolean) => {
       saving = value
     },
+    markSaved: (sent?: SaveBlock[], saved?: Block[]) => {
+      const pm = sent?.length ? sent.map((b) => b.pm) : editor.getJSON().content ?? []
+      initialKey = stableStringify(pm)
+      if (sent?.length) {
+        // 基准必须与编辑器顶层节点一一对应（revealBlock 按 baseline 下标定位），
+        // 所以用 sent 的形状 + 服务端回填的真实 id（新建块上一轮还是 id:null，
+        // 不补上就会每次保存都换 id）。降级文档（一个块拆成多个节点）长度对不上，
+        // 宁可只保留 sent 自己的 id，也不打乱下标
+        const same = saved && saved.length === sent.length ? saved : null
+        sanitized.baseline = sent.map((b, i) => ({
+          id: (same?.[i]?.id || b.id) ?? null,
+          type: same?.[i]?.type || b.type,
+          pm: b.pm,
+        }))
+      }
+    },
+    unsupported: () => sanitized.unsupportedBlocks,
+    revealBlock: (blockId: string) => {
+      const idx = sanitized.baseline.findIndex((b) => b.id === blockId)
+      if (idx < 0) return false
+      const doc = editor.state.doc
+      if (idx >= doc.childCount) return false
+      // 顶层第 idx 个块的起点（内容位置从 0 算起，块 i 占 [from, from+nodeSize)）
+      let from = 0
+      for (let i = 0; i < idx; i++) from += doc.child(i).nodeSize
+      const to = from + doc.child(idx).nodeSize
+      // 高亮必须走 ProseMirror 装饰器：直接改 DOM 属性的话，PM 下一次重绘该块
+      // 会把节点整个换掉（实测挂载后几十毫秒内就会发生），标记就没了。
+      try {
+        const deco = Decoration.node(from, to, { class: 'block-flash', 'data-block-id': blockId })
+        editor.view.dispatch(
+          editor.state.tr.setMeta(FLASH_META, DecorationSet.create(doc, [deco])).setMeta('addToHistory', false),
+        )
+      } catch {
+        return false
+      }
+      window.clearTimeout(flashTimer)
+      flashTimer = window.setTimeout(() => {
+        editor.view.dispatch(editor.state.tr.setMeta(FLASH_META, null))
+      }, 2400)
+      const at = editor.view.nodeDOM(from)
+      let dom: HTMLElement | null = at instanceof HTMLElement ? at : ((at as Node | null)?.parentElement ?? null)
+      while (dom && dom.parentElement && dom.parentElement !== editor.view.dom) dom = dom.parentElement
+      if (dom && typeof dom.scrollIntoView === 'function') dom.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      return true
+    },
     destroy: () => {
       window.clearTimeout(langTimer)
+      window.clearTimeout(flashTimer)
       editor.destroy()
       element.remove()
     },

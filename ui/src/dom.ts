@@ -103,6 +103,8 @@ export interface ModalButton {
   label: string
   value: string
   primary?: boolean
+  /** 危险动作（删除类）：红色描边，且不参与回车提交 */
+  danger?: boolean
 }
 
 interface ModalOptions {
@@ -163,7 +165,7 @@ export function showModal(opts: ModalOptions): Promise<string> {
             h(
               'button',
               {
-                class: b.primary ? 'btn primary' : 'btn',
+                class: `btn${b.primary ? ' primary' : ''}${b.danger ? ' danger' : ''}`,
                 onclick: () => close(b.value),
               },
               b.label,
@@ -188,13 +190,14 @@ export async function confirmDialog(
   title: string,
   message: string,
   confirmLabel = '确定',
+  danger = false,
 ): Promise<boolean> {
   const res = await showModal({
     title,
     message,
     buttons: [
       { label: '取消', value: '' },
-      { label: confirmLabel, value: 'ok', primary: true },
+      { label: confirmLabel, value: 'ok', danger, primary: !danger },
     ],
   })
   return res === 'ok'

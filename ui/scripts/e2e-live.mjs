@@ -941,7 +941,7 @@ function buildReport(ctx) {
   lines.push('```')
   lines.push('')
 
-  lines.push('### 3.4 编辑保存：前端实际发出的 api/doc/save')
+  lines.push('### 3.4 自动保存：前端实际发出的 api/doc/save')
   lines.push('')
   lines.push('```')
   if (ctx.saveReq) {
@@ -975,6 +975,8 @@ function buildReport(ctx) {
   lines.push('')
   lines.push('```')
   if (ctx.noop) {
+    lines.push(`打开文档期间（停笔 3.5s）产生的 api/doc/save 请求数：${ctx.noop.idleSaves}（没改动就不写盘）`)
+    lines.push(`直接调接口做全 changed:false 保存：${ctx.noop.apiOk}`)
     lines.push(`保存前 sha256 = ${ctx.noop.shaBefore}`)
     lines.push(`保存后 sha256 = ${ctx.noop.shaAfter}`)
     lines.push(`字节完全一致：${ctx.noop.byteEqual}`)
@@ -1458,9 +1460,13 @@ async function main() {
       const b = document.querySelector('.sidebar-brand')
       return b ? { svg: !!b.querySelector('svg'), text: b.textContent.replace(/\s+/g, ' ').trim() } : null
     })(),
-    sidebarBrandFirst: (function () {
-      const s = document.querySelector('.sidebar')
-      return !!(s && s.firstElementChild && s.firstElementChild.classList.contains('sidebar-brand'))
+    sidebarNav: (function () {
+      const b = document.querySelector('.tree-nav .tree-nav-item')
+      return b ? { text: b.textContent.replace(/\s+/g, ' ').trim(), active: b.classList.contains('is-active') } : null
+    })(),
+    sidebarButtons: (function () {
+      const btns = Array.prototype.slice.call(document.querySelectorAll('.sidebar button, .sidebar .tree-nav-item'))
+      return btns.map(function (b) { return b.textContent.replace(/\s+/g, ' ').trim() })
     })(),
     topbarText: (document.querySelector('.topbar') && document.querySelector('.topbar').innerText || '').replace(/\s+/g, ' ').trim(),
   }))()`)
@@ -1473,7 +1479,8 @@ async function main() {
   check('3-页面', `document.title = ${JSON.stringify(pageInfo.title)}（含 云记笔记）`, /云记笔记/.test(pageInfo.title ?? ''), pageInfo.title)
   check('3-页面', '.shell / .topbar / .sidebar / .main 布局齐全', pageInfo.hasShell && pageInfo.hasTopbar && pageInfo.hasSidebar && pageInfo.hasMain, JSON.stringify({ shell: pageInfo.hasShell, topbar: pageInfo.hasTopbar, sidebar: pageInfo.hasSidebar, main: pageInfo.hasMain }))
   check('3-品牌', `首页顶部是云记笔记标识（内联 SVG + 名字）：${JSON.stringify(pageInfo.homeBrand)}`, !!(pageInfo.homeBrand && pageInfo.homeBrand.svg) && /云记笔记/.test(pageInfo.homeBrand?.text ?? ''), JSON.stringify(pageInfo.homeBrand))
-  check('3-品牌', '回首页入口在侧栏顶部品牌行（不在顶栏）', pageInfo.sidebarBrandFirst && !!(pageInfo.sidebarBrand && pageInfo.sidebarBrand.svg) && /云记笔记/.test(pageInfo.sidebarBrand?.text ?? '') && !/zt-note|云记笔记/.test(pageInfo.topbarText ?? ''), JSON.stringify({ sidebarBrand: pageInfo.sidebarBrand, sidebarBrandFirst: pageInfo.sidebarBrandFirst, topbarText: pageInfo.topbarText }))
+  check('3-品牌', '侧栏不放品牌（首页 hero 已有标识）；只留「首页」导航项', !!pageInfo.sidebarNav && /首页/.test(pageInfo.sidebarNav.text) && pageInfo.sidebarBrand === null && !pageInfo.sidebarButtons.some((t) => t === '云记笔记'), JSON.stringify({ sidebarNav: pageInfo.sidebarNav, sidebarBrand: pageInfo.sidebarBrand, sidebarButtons: pageInfo.sidebarButtons }))
+  check('3-品牌', '「首页」导航项当前高亮（在首页），且顶栏没有品牌名', pageInfo.sidebarNav?.active === true && !/zt-note|云记笔记/.test(pageInfo.topbarText ?? ''), JSON.stringify({ nav: pageInfo.sidebarNav, topbarText: pageInfo.topbarText }))
   check('3-页面', '顶栏版本号来自真实后端 health（不是「连接中…」）', /^v/.test(pageInfo.version ?? ''), `version 区文案=${JSON.stringify(pageInfo.version)}`)
   check('3-树', `文档树渲染 ${EXPECT_BOXES} 个笔记本且含 笔记本A / 示例笔记本 / ${WELCOME_BOX}`, pageInfo.notebooks.length === EXPECT_BOXES && pageInfo.notebooks.includes('笔记本A') && pageInfo.notebooks.includes('示例笔记本') && pageInfo.notebooks.includes(WELCOME_BOX), JSON.stringify(pageInfo.notebooks))
   check('3-树', `笔记本展开后渲染 ${EXPECT_DOCS} 个文档条目且含《${DOC_TITLE}》（含首次进入的欢迎文档）`, pageInfo.docs.length === EXPECT_DOCS && pageInfo.docs.includes(DOC_TITLE), `${pageInfo.docs.length} 条：${pageInfo.docs.slice(0, 14).join('、')}`)
@@ -1559,7 +1566,7 @@ async function main() {
   /* --- 4. 点击《示例文档》查看正文 --- */
   log('\n[4] 点击文档树打开《示例文档》')
   await cdp.clickElement(treeDocRow(DOC_TITLE), `文档树《${DOC_TITLE}》`)
-  await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图 .doc-html 出现')
+  await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '文档打开（编辑器 .ProseMirror 出现）')
   const readInfo = await cdp.evalJs(`(() => ({
     title: (document.querySelector('.doc-title') && document.querySelector('.doc-title').textContent || '').trim(),
     bodyText: (document.querySelector('.doc-body') && document.querySelector('.doc-body').innerText || '').slice(0, 4000),
@@ -1575,12 +1582,18 @@ async function main() {
   check('4-阅读', `hash 路由指向该文档`, readInfo.hash.includes(target.id), `hash=${readInfo.hash}`)
   await cdp.screenshot('02-doc-read')
 
-  /* --- 5. 编辑 → 保存 → 磁盘校验 --- */
-  log('\n[5] 编辑保存链路（真实 UI 交互）')
+  /* --- 5. 直接改 → 自动保存 → 磁盘校验 --- */
+  log('\n[5] 直接改 + 自动保存链路（真实 UI 交互，无「编辑/保存」按钮）')
   let editOk = false
   try {
-    await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」按钮')
     await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '编辑器 .ProseMirror 出现')
+    await cdp.waitFor(`!!document.querySelector('.doc-state.is-saved') || !!document.querySelector('.doc-state.is-dirty')`, 15000, '保存状态栏出现')
+    const actionsInfo = await cdp.evalJs(`(() => ({
+      buttons: Array.from(document.querySelectorAll('.doc-actions button')).map((b) => b.textContent.trim()),
+      editable: !!document.querySelector('.doc-title.is-editable'),
+    }))()`)
+    check('5-编辑', '没有「编辑 / 保存 / 取消」按钮（打开即可改）', actionsInfo.buttons.length === 0, `实际按钮=${JSON.stringify(actionsInfo.buttons)}`)
+    check('5-编辑', '标题可点击改名（.doc-title.is-editable）', actionsInfo.editable, `editable=${actionsInfo.editable}`)
     const editorInfo = await cdp.evalJs(`(() => ({
       blocks: (document.querySelector('.zt-editor-foot') && document.querySelector('.zt-editor-foot').textContent || '').trim(),
       firstP: (document.querySelector('.ProseMirror p') && document.querySelector('.ProseMirror p').textContent || ''),
@@ -1615,19 +1628,34 @@ async function main() {
     await cdp.screenshot('03-edit-mode')
 
     const netBefore = cdp.network.length
-    await cdp.clickElement(byText('.doc-actions button', '保存'), '「保存」按钮')
-    await cdp.waitFor(`!!document.querySelector('.toast-ok')`, TOAST_TIMEOUT, '保存成功 toast(.toast-ok)')
-    const toastInfo = await cdp.evalJs(`(() => ({
-      ok: (document.querySelector('.toast-ok') && document.querySelector('.toast-ok').textContent || '').trim(),
+    // 没有保存按钮：停笔后自动落盘，状态栏给「已保存 HH:MM」
+    await cdp.waitFor(`!!document.querySelector('.doc-state.is-saved')`, TOAST_TIMEOUT, '自动保存完成（.doc-state.is-saved）')
+    const saveState = await cdp.evalJs(`(() => ({
+      state: (document.querySelector('.doc-state') && document.querySelector('.doc-state').textContent || '').trim(),
       err: (document.querySelector('.toast-error') && document.querySelector('.toast-error').textContent || '').trim(),
+      stillEditing: !!document.querySelector('.ProseMirror'),
+      hash: location.hash,
     }))()`)
-    check('5-保存', `出现保存成功反馈（.toast-ok = ${JSON.stringify(toastInfo.ok)}）`, toastInfo.ok.includes('已保存'), `toast-ok=${JSON.stringify(toastInfo.ok)}`)
-    check('5-保存', '没有出现错误 toast（.toast-error）', !toastInfo.err, toastInfo.err ? `toast-error=${JSON.stringify(toastInfo.err)}` : '无')
-
-    await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '保存后回到阅读模式')
+    ctx.autosave = { state: saveState.state, buttons: actionsInfo.buttons }
+    check('5-保存', `自动保存状态文案 = ${JSON.stringify(saveState.state)}`, /^已保存 \d{2}:\d{2}$/.test(saveState.state), `实际=${JSON.stringify(saveState.state)}`)
+    check('5-保存', '自动保存过程无错误提示（.toast-error）', !saveState.err, saveState.err ? `toast-error=${JSON.stringify(saveState.err)}` : '无')
+    check('5-保存', '保存后仍停在编辑器，没有被踢回阅读模式', saveState.stillEditing, `ProseMirror=${saveState.stillEditing}`)
     const afterSaveText = await cdp.evalJs(`(document.querySelector('.doc-body') && document.querySelector('.doc-body').innerText || '').slice(0, 2000)`)
-    check('5-保存', '保存后阅读视图立即显示新文本（后端回读）', afterSaveText.includes(NEW_TEXT), `含新文本=${afterSaveText.includes(NEW_TEXT)}`)
+    check('5-保存', '编辑器里就是新文本（无需回读）', afterSaveText.includes(NEW_TEXT), `含新文本=${afterSaveText.includes(NEW_TEXT)}`)
     await cdp.screenshot('04-after-save')
+
+    // 撤销 / 重做：改动随时可撤回（重做后与落盘内容一致，便于第 6 步校验磁盘）
+    await cdp.evalJs(`(() => { const pm = document.querySelector('.ProseMirror'); if (pm) pm.focus(); return true })()`)
+    await cdp.pressKey('z', { code: 'KeyZ', vk: 90, modifiers: 2, text: '' })
+    await sleep(500)
+    const undone = await cdp.evalJs(`(document.querySelector('.ProseMirror p') && document.querySelector('.ProseMirror p').textContent) || ''`)
+    check('5-撤销', 'Ctrl+Z 能撤销回原文（改动可撤销）', undone !== NEW_TEXT && undone.includes('正文片段'), `撤销后首段=${JSON.stringify(undone.slice(0, 60))}`)
+    await cdp.pressKey('Z', { code: 'KeyZ', vk: 90, modifiers: 10, text: '' })
+    await sleep(500)
+    const redone = await cdp.evalJs(`(document.querySelector('.ProseMirror p') && document.querySelector('.ProseMirror p').textContent) || ''`)
+    check('5-撤销', 'Ctrl+Shift+Z 重做回新文本', redone === NEW_TEXT, `重做后首段=${JSON.stringify(redone.slice(0, 60))}`)
+    await cdp.waitFor(`!!document.querySelector('.doc-state.is-saved')`, TOAST_TIMEOUT, '撤销/重做后再次自动保存完成')
+    ctx.undo = { undone: undone.slice(0, 40), redone: redone.slice(0, 40) }
 
     // 抓取本次 save 的网络报文
     await sleep(400)
@@ -1661,10 +1689,10 @@ async function main() {
   } catch (err) {
     check('5-编辑', '编辑保存链路整体执行', false, err instanceof Error ? err.message : String(err))
     bug(
-      'UI 编辑保存链路中断',
+      'UI 自动保存链路中断',
       err instanceof Error ? err.message : String(err),
       `node ui/scripts/e2e-live.mjs`,
-      '点击编辑 → 替换首段 → 点击保存 → toast 已保存',
+      '打开文档（已是编辑器）→ 替换首段 → 等自动保存（状态栏 已保存 HH:MM）',
       '链路在中途失败，见上方断言',
       'ui/src/views/doc.ts、ui/src/editor.ts（若属产品 bug）',
     )
@@ -1719,41 +1747,32 @@ async function main() {
     skip('6-磁盘', '(a)-(e) 磁盘 .sy 校验')
   }
 
-  /* --- 7. 无改动保存：字节保真 --- */
-  log('\n[7] 无改动直接保存（sha256 必须不变）')
+  /* --- 7. 不改就不写盘；无改动保存必须字节保真 --- */
+  log('\n[7] 打开文档不写盘 + 无改动保存（sha256 必须不变）')
   if (editOk) {
     try {
       await nav(ctx.pageUrl ?? APP_URL, '重新加载页面')
       await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树重新渲染')
       const syNoopBefore = readSy(target.box, target.id)
+      const mark = cdp.network.length
       await cdp.clickElement(treeDocRow(DOC_TITLE), `文档树《${DOC_TITLE}》（第二次）`)
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现（第二次）')
-      await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」按钮（第二次）')
       await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '编辑器出现（第二次）')
-      await sleep(300)
+      await sleep(3500) // 停笔超过自动保存的 0.9s：没改动就不该冒出 save
+      const idleSaves = cdp.network.slice(mark).filter((n) => n.url.includes('/api/doc/save')).length
+      check('7-无改动保存', '打开文档不产生任何 api/doc/save（没改就不写盘）', idleSaves === 0, `save 请求数=${idleSaves}`)
 
-      const netBefore = cdp.network.length
-      await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' }) // Ctrl+S
-      await cdp.waitFor(`!!document.querySelector('.toast-ok')`, TOAST_TIMEOUT, 'Ctrl+S 保存成功 toast')
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, 'Ctrl+S 后回到阅读模式')
-      await sleep(500)
-
-      const saveReqs2 = cdp.network.filter((n) => n.url.includes('/api/doc/save')).slice(-1)
-      let flags = []
-      let allFalse = false
-      if (saveReqs2.length) {
-        try {
-          const body = JSON.parse(saveReqs2[0].postData)
-          flags = (body.blocks ?? []).map((b) => b.changed)
-          allFalse = flags.length > 0 && flags.every((f) => f === false)
-        } catch {
-          /* 忽略 */
-        }
-      }
+      // 直接调接口做一次「全 changed:false」的保存：后端必须原样返回、不碰磁盘
+      const full = await getJson(`${API}/doc?box=${encodeURIComponent(target.box)}&id=${encodeURIComponent(target.id)}`)
+      const blocks = (full.blocks ?? []).map((b) => ({ id: b.id, type: b.type, changed: false, pm: b.pm }))
+      const noopResp = await postJson(`${API}/doc/save`, { box: target.box, id: target.id, blocks })
+      const flags = blocks.map((b) => b.changed)
+      const allFalse = flags.length > 0 && flags.every((f) => f === false)
       const syNoopAfter = readSy(target.box, target.id)
       const mtimeBefore = statSync(syNoopBefore.path).mtimeMs
       const mtimeAfter = statSync(syNoopAfter.path).mtimeMs
       ctx.noop = {
+        idleSaves,
+        apiOk: clip(JSON.stringify(noopResp), 120),
         shaBefore: syNoopBefore.sha,
         shaAfter: syNoopAfter.sha,
         byteEqual: syNoopBefore.sha === syNoopAfter.sha,
@@ -1762,15 +1781,14 @@ async function main() {
         mtimeBefore: new Date(mtimeBefore).toISOString(),
         mtimeAfter: new Date(mtimeAfter).toISOString(),
       }
-      check('7-无改动保存', 'Ctrl+S 触发保存并成功（toast 已保存）', true, '')
-      check('7-无改动保存', '前端全部按 changed:false 下发（保真通道）', allFalse, `changed 标记=${JSON.stringify(flags)}`)
+      check('7-无改动保存', '接口接受全 changed:false 的保存请求', Boolean(noopResp && noopResp.error === undefined), clip(JSON.stringify(noopResp), 160))
       check('7-无改动保存', 'sha256 完全一致（后端未写盘）', syNoopBefore.sha === syNoopAfter.sha, `${syNoopBefore.sha} vs ${syNoopAfter.sha}`)
       check('7-无改动保存', '文件 mtime 未变化（无写盘副作用）', mtimeBefore === mtimeAfter, `${new Date(mtimeBefore).toISOString()} vs ${new Date(mtimeAfter).toISOString()}`)
     } catch (err) {
       check('7-无改动保存', '无改动保存链路', false, err instanceof Error ? err.message : String(err))
     }
   } else {
-    skip('7-无改动保存', 'Ctrl+S 无改动保存字节保真')
+    skip('7-无改动保存', '无改动不写盘 + 字节保真')
   }
 
   /* --- 8. 搜索 --- */
@@ -1799,7 +1817,7 @@ async function main() {
     check('8-搜索', '整篇命中卡片 tooltip = 整篇命中，点击打开', s.firstTip === '整篇命中，点击打开', `实际=${JSON.stringify(s.firstTip)}`)
     if (s.hits >= 1) {
       await cdp.clickElement(`document.querySelector('.search-hit')`, '第一条搜索结果')
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '跳转后阅读视图出现')
+      await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '跳转后文档打开（编辑器出现）')
       const opened = await cdp.evalJs(`(document.querySelector('.doc-title') && document.querySelector('.doc-title').textContent || '').trim()`)
       const flash = await cdp.evalJs(`document.querySelectorAll('.block-flash').length`)
       ctx.search.openedTitle = opened
@@ -1829,16 +1847,16 @@ async function main() {
       if (bodyHit.blockId) {
         check('8b-块定位', '正文命中卡片 tooltip = 定位到块 <id>', b.tip === `定位到块 ${bodyHit.blockId}`, `实际=${JSON.stringify(b.tip)}`)
         await cdp.clickElement(`document.querySelector('.search-hit')`, '正文命中首条结果')
-        await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '跳转后阅读视图出现')
+        await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '跳转后文档打开（编辑器出现）')
         const hash2 = await cdp.evalJs(`location.hash`)
         const flash2 = await cdp.evalJs(`document.querySelectorAll('.block-flash').length`)
-        const flashedId = await cdp.evalJs(`(() => { const el = document.querySelector('.block-flash'); return el ? (el.getAttribute('data-node-id') || el.getAttribute('data-id') || '') : '' })()`)
+        const flashedId = await cdp.evalJs(`(() => { const el = document.querySelector('.block-flash'); return el ? (el.getAttribute('data-block-id') || el.getAttribute('data-node-id') || el.getAttribute('data-id') || '') : '' })()`)
         ctx.search.bodyJump = { hash: hash2, flash: flash2, flashedId }
         check(
           '8b-块定位',
           '跳转带 ?block=<id> 且块级高亮真的命中',
           String(hash2).includes(`block=${bodyHit.blockId}`) && flash2 === 1 && flashedId === bodyHit.blockId,
-          `hash=${hash2} .block-flash=${flash2} data-node-id=${JSON.stringify(flashedId)}`,
+          `hash=${hash2} .block-flash=${flash2} data-block-id=${JSON.stringify(flashedId)}`,
         )
       } else {
         bug(
@@ -1967,8 +1985,6 @@ async function main() {
       await nav(APP_URL, '回到首页')
       await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
       await cdp.clickElement(treeDocRow('E2E 图片测试'), '文档树《E2E 图片测试》')
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现')
-      await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」按钮')
       await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '编辑器出现')
       await sleep(300)
 
@@ -2015,10 +2031,11 @@ async function main() {
       check('11-图片', '走的是 POST api/assets/upload，且返回 200', uploadReqs.length >= 1 && uploadReqs.every((n) => n.status === 200), JSON.stringify(uploadReqs.map((n) => `${n.method} ${n.status}`)))
       await cdp.screenshot('11-paste-image')
 
-      // 保存 → 磁盘校验 → 阅读视图
+      // 保存（Ctrl+S 手动落盘也一样）→ 切「原样预览」核对后端渲染
       await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' })
-      await cdp.waitFor(`!!document.querySelector('.toast-ok')`, TOAST_TIMEOUT, '保存成功 toast')
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '回到阅读模式')
+      await cdp.waitFor(`!!document.querySelector('.doc-state.is-saved')`, TOAST_TIMEOUT, '手动保存完成')
+      await cdp.clickElement(`document.querySelector('.doc-preview-btn')`, '「原样预览」按钮')
+      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '原样预览（后端渲染）出现')
       await sleep(400)
 
       const sy = readSy(imgDoc.box, imgDoc.id)
@@ -2069,7 +2086,27 @@ async function main() {
     await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
     // 直接走 hash 路由，不依赖文档树展开状态
     await cdp.evalJs(`location.hash = '#/doc/20250708095329-8rxeagf/20250604143405-29orui7'`)
-    await cdp.waitFor(`!!document.querySelector('.doc-html .img-rows > p.img-row')`, 20000, '阅读视图出现图片行')
+    await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 20000, '文档打开')
+    // 图片行是「后端渲染」时的布局：编辑器里它就是普通段落 + 图片（块本身可编辑），
+    // 所以这里不再期待 is-warn 警告，而是核实编辑视图可用 + 原样预览仍是一行四张
+    await cdp.waitFor(`document.querySelectorAll('.ProseMirror img').length > 0`, 15000, '编辑区里出现图片')
+    const editState = await cdp.evalJs(`(() => {
+      const b = document.querySelector('.doc-preview-btn')
+      return {
+        cls: b ? b.className : '(没有按钮)',
+        title: b ? b.getAttribute('title') : '',
+        imgs: document.querySelectorAll('.ProseMirror img').length,
+        blocks: document.querySelectorAll('.ProseMirror > *').length,
+      }
+    })()`)
+    check(
+      '11b-排版',
+      '文档直接可编辑（没有「块无法呈现」警告，无 is-warn）',
+      String(editState?.cls || '').includes('doc-preview-btn') && !String(editState?.cls || '').includes('is-warn'),
+      JSON.stringify(editState),
+    )
+    await cdp.clickElement(`document.querySelector('.doc-preview-btn')`, '「原样预览」')
+    await cdp.waitFor(`!!document.querySelector('.doc-html .img-rows > p.img-row')`, 20000, '原样预览里出现图片行')
     // 图片是 loading=lazy，先滚到容器处再量
     await cdp.evalJs(`(() => { const b = document.querySelector('.doc-html .img-rows'); if (b) b.scrollIntoView({ block: 'center' }); return true })()`)
     await sleep(900)
@@ -2116,8 +2153,6 @@ async function main() {
       await nav(APP_URL, '回到首页')
       await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
       await cdp.clickElement(treeDocRow('E2E 表格测试'), '文档树《E2E 表格测试》')
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现')
-      await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」按钮')
       await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '编辑器出现')
       await sleep(300)
 
@@ -2187,10 +2222,11 @@ async function main() {
       check('12-表格', '再开表头行：th 回到 4', s7?.th === 4, JSON.stringify(s7))
       await cdp.screenshot('12-table-edited')
 
-      // 保存 → 阅读视图 → 磁盘 .sy
+      // 保存 → 切「原样预览」核对后端渲染 → 磁盘 .sy
       await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' })
-      await cdp.waitFor(`!!document.querySelector('.toast-ok')`, TOAST_TIMEOUT, '保存成功 toast')
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '回到阅读模式')
+      await cdp.waitFor(`!!document.querySelector('.doc-state.is-saved')`, TOAST_TIMEOUT, '手动保存完成')
+      await cdp.clickElement(`document.querySelector('.doc-preview-btn')`, '「原样预览」按钮')
+      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '原样预览出现')
       await sleep(400)
 
       const cntType = (node, type) => {
@@ -2215,16 +2251,15 @@ async function main() {
       check('12-阅读', '阅读视图表格 3 行', rdRows === 3, `tr=${rdRows}`)
       await cdp.screenshot('12-table-read')
 
-      await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」（二次进入）')
+      await cdp.clickElement(`document.querySelector('.doc-preview-btn')`, '「回到编辑」（二次进入）')
       await cdp.waitFor(`!!document.querySelector('.ProseMirror table')`, 15000, '二次进入编辑器出现表格')
       const s8 = await tableShape()
       check('12-表格', '二次进入编辑器：表格结构一致（幂等）', s8?.rows === 3 && s8?.cols === 4 && s8?.th === 4, JSON.stringify(s8))
 
-      // 未改动的表格再保存：应走保真通道，磁盘 sha 不变
+      // 未改动的表格再手动存一次：应走保真通道，磁盘 sha 不变
       const before = readSy(tblDoc.box, tblDoc.id)
       await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' })
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '无改动保存后回阅读模式')
-      await sleep(300)
+      await sleep(800)
       const after = readSy(tblDoc.box, tblDoc.id)
       check('12-磁盘', '未改动的表格保存后 sha256 一致（表格不再被误改）', before.sha === after.sha, `${before.sha} vs ${after.sha}`)
 
@@ -2347,7 +2382,7 @@ async function main() {
       await cdp.clickElement(`document.querySelector('.topbar-burger')`, '☰ 文档树按钮')
       await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().left >= -1`, 3000, '抽屉滑入完成')
       await cdp.clickElement(treeDocRow(DOC_TITLE), `抽屉里的《${DOC_TITLE}》`)
-      await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现（窄屏）')
+      await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '窄屏文档打开（编辑器出现）')
       await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().right <= 1`, 3000, '选中文档后抽屉收起')
       const afterPick = await cdp.evalJs(`(() => {
         const r = document.querySelector('.sidebar').getBoundingClientRect()
@@ -2374,8 +2409,6 @@ async function main() {
         await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().left >= -1`, 3000, '抽屉滑入完成')
         await cdp.clickElement(treeDocRow('E2E 窄屏测试'), '文档树《E2E 窄屏测试》')
         await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().right <= 1`, 3000, '选中文档后抽屉收起')
-        await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现')
-        await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」按钮')
         await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '编辑器出现')
         await sleep(300)
 
@@ -2443,7 +2476,7 @@ async function main() {
 
         // 保存（窄屏下 Ctrl+S）并核对落盘
         await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' })
-        await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '窄屏保存后回阅读模式')
+        await cdp.waitFor(`!!document.querySelector('.doc-state.is-saved')`, TOAST_TIMEOUT, '窄屏手动保存完成')
         await sleep(250)
         const syM = readSy(mobDoc.box, mobDoc.id)
         check('13-磁盘', '窄屏编辑的表格落到 .sy（NodeTable + 文字）', syM.json?.Children?.[0]?.Type === 'NodeTable' && syM.raw.includes(MOB_TEXT), JSON.stringify((syM.json?.Children ?? []).map((n) => n.Type)))

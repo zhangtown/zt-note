@@ -62,12 +62,18 @@ export async function apiGet<T>(path: string): Promise<T> {
   return (await parse(res)) as T
 }
 
-export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+export async function apiPost<T>(
+  path: string,
+  body?: unknown,
+  init?: { keepalive?: boolean },
+): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeader() },
     body: JSON.stringify(body ?? {}),
     credentials: 'same-origin',
+    // 页面隐藏/卸载时的最后一存：keepalive 让请求活过 unload
+    keepalive: init?.keepalive ?? false,
   })
   return (await parse(res)) as T
 }
@@ -135,8 +141,10 @@ export const api = {
   renameDoc: (box: string, id: string, title: string) => apiPost('api/doc/rename', { box, id, title }),
   deleteDoc: (box: string, id: string) => apiPost('api/doc/delete', { box, id }),
   createNotebook: (name: string) => apiPost<{ id: string }>('api/notebook/create', { name }),
-  saveDoc: (box: string, id: string, blocks: import('./types').SaveBlock[]) =>
-    apiPost('api/doc/save', { box, id, blocks: stripTokens(blocks) }),
+  renameNotebook: (id: string, name: string) => apiPost('api/notebook/rename', { id, name }),
+  deleteNotebook: (id: string) => apiPost('api/notebook/delete', { id }),
+  saveDoc: (box: string, id: string, blocks: import('./types').SaveBlock[], keepalive = false) =>
+    apiPost<import('./types').DocResp>('api/doc/save', { box, id, blocks: stripTokens(blocks) }, { keepalive }),
   importPath: (path: string) =>
     apiPost<import('./types').ImportResp>('api/import/path', { path }),
   importUpload: (file: File, onProgress?: (p: number) => void) =>

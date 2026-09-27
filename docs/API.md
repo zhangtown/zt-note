@@ -39,14 +39,24 @@
 
 | 方法 | 路径 | body |
 |---|---|---|
-| POST | `api/doc/save` | `{box,id,blocks:[{id,pm,changed:bool,type}]}` |
+| POST | `api/doc/save` | `{box,id,blocks:[{id,pm,changed:bool,type}]}` → `{id,blocks:[{id,type,pm}],html,…}` |
 | POST | `api/doc/create` | `{box,title,parentId?}` → `{id}` |
 | POST | `api/doc/rename` | `{box,id,title}` |
 | POST | `api/doc/delete` | `{box,id}` |
-| POST | `api/notebook/create` | `{name}` → `{id}` |
+| POST | `api/notebook/create` | `{name}` → `{id}`（重名自动加 “ 2”） |
+| POST | `api/notebook/rename` | `{id,name}` |
+| POST | `api/notebook/delete` | `{id}`（连目录一起删，不可恢复） |
 | POST | `api/assets/upload` | multipart `file` → `{name,url}` |
 保存语义：`changed:false` 的块按 `id` 复用原始 .sy 节点；`changed:true` 的块按 `pm` 重新生成
 （保留块 ID）；`blocks` 中缺失的块视为删除；顺序以 `blocks` 数组为准。后端刷新 `updated`。
+响应回显**保存后的块表**（新建块的真实 `id` 在这里），前端用它更新下一轮比对的基准 —— 新块
+不能永远以 `id:null` 回传，否则每存一次都会多出一份。
+
+笔记本的 `create`/`rename`/`delete`（`internal/store/store.go`）：`id` 必须是合法思源笔记本 ID，
+且不能是系统目录（`assets`/`templates`/`storage`/`widgets`/`plugins`/`emojis`、以 `.` 开头、以及工作区根目录），
+否则 **400**；目标不存在（或同名路径不是目录）**404**；`rename` 只改 `.siyuan/conf.json` 的 `name`
+（其它字段原样保留），空名字 **400**；`create` 重名不报错，把名字写成「名字 2」。响应体统一是
+`{ok:false,error:"..."}` / `{ok:true,...}`（见 `internal/server/notebook_test.go`）。
 
 ## 图片与资源
 

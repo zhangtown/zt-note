@@ -10,10 +10,10 @@ import {
   stopRouter,
   type Route,
 } from './router'
-import { store, docTitle } from './store'
+import { store, docTitle, expanded } from './store'
 import { createAutoLock, readAutoLockMinutes } from './autolock'
 import { openSecurityDialog } from './views/security'
-import { createTreeView, type TreeHandle } from './views/tree'
+import { createTreeView, rememberExpanded, type TreeAction, type TreeHandle } from './views/tree'
 import { createTopbar, type TopbarHandle } from './views/topbar'
 import { logoMark } from './logo'
 import { mountDoc, type ViewHandle } from './views/doc'
@@ -150,18 +150,18 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     }
   }
 
-  async function actionNewDoc(): Promise<void> {
+  async function actionNewDoc(boxArg?: string, parentId?: string): Promise<void> {
     const sel = store.selection
-    const box = currentBox()
+    const box = boxArg || currentBox()
     if (!box) {
       toast('请先在左侧选择一个笔记本（或先新建笔记本）', 'error')
       return
     }
-    const parentId = sel?.kind === 'doc' ? sel.id : undefined
-    const parentTitle = parentId
+    const parent = parentId ?? (sel?.kind === 'doc' && sel.box === box ? sel.id : undefined)
+    const parentTitle = parent
       ? store.tree?.notebooks
           .find((nb) => nb.id === box)
-          ?.docs.find((d) => d.id === parentId)?.title ?? parentId
+          ?.docs.find((d) => d.id === parent)?.title ?? parent
       : ''
     const title = await promptDialog(
       '新建文档',
@@ -171,8 +171,10 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     )
     if (title === null) return
     try {
-      const res = await api.createDoc(box, title || '未命名文档', parentId)
-      toast(parentId ? `已在「${parentTitle}」下新建子文档` : '已创建文档', 'ok')
+      const res = await api.createDoc(box, title || '未命名文档', parent)
+      if (parent) expanded.add(`doc:${box}:${parent}`)
+      rememberExpanded(box)
+      toast(parent ? `已在「${parentTitle}」下新建子文档` : '已创建文档', 'ok')
       await refreshTree()
       if (res?.id) navigate({ name: 'doc', box, id: res.id, mode: 'read', block: '' })
     } catch (err) {
@@ -180,45 +182,119 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     }
   }
 
-  async function actionRename(): Promise<void> {
-    const sel = store.selection
-    if (sel?.kind !== 'doc') {
+  /** target 为空时用左侧当前选中项（顶栏按钮走这条路）。 */
+  async function actionRename(target?: { box: string; id: string; title: string }): Promise<void> {
+    const sel = target ?? (store.selection?.kind === 'doc'
+      ? {
+          box: store.selection.box,
+          id: store.selection.id,
+          title: docTitle(store.selection.box, store.selection.id),
+        }
+      : null)
+    if (!sel) {
       toast('请先在左侧选择要重命名的文档', 'error')
       return
     }
-    const title = await promptDialog('重命名文档', '新标题', docTitle(sel.box, sel.id), '')
+    const title = await promptDialog('重命名文档', '新标题', sel.title, '')
     if (!title) return
     try {
       await api.renameDoc(sel.box, sel.id, title)
       toast('已重命名', 'ok')
       await refreshTree()
-      if (currentRoute().name === 'doc') await render(currentRoute(), true)
+      const route = currentRoute()
+      if (route.name === 'doc' && route.box === sel.box && route.id === sel.id) {
+        await render(route, true)
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : '重命名失败', 'error')
     }
   }
 
-  async function actionDelete(): Promise<void> {
-    const sel = store.selection
-    if (sel?.kind !== 'doc') {
+  /** target 为空时用左侧当前选中项（顶栏按钮走这条路）。 */
+  async function actionDelete(target?: { box: string; id: string; title: string }): Promise<void> {
+    const sel = target ?? (store.selection?.kind === 'doc'
+      ? {
+          box: store.selection.box,
+          id: store.selection.id,
+          title: docTitle(store.selection.box, store.selection.id),
+        }
+      : null)
+    if (!sel) {
       toast('请先在左侧选择要删除的文档', 'error')
       return
     }
     const ok = await confirmDialog(
       '删除文档',
-      `确定删除「${docTitle(sel.box, sel.id)}」？子文档会一并删除，此操作不可撤销。`,
+      `确定删除「${sel.title}」？子文档会一并删除，此操作不可撤销。`,
       '删除',
+      true,
     )
     if (!ok) return
     try {
       await api.deleteDoc(sel.box, sel.id)
       toast('已删除', 'ok')
-      store.selection = null
+      if (store.selection?.kind === 'doc' && store.selection.id === sel.id) store.selection = null
       await refreshTree()
       const route = currentRoute()
-      if (route.name === 'doc' && route.id === sel.id) navigate({ name: 'home' })
+      if (route.name === 'doc' && route.box === sel.box && route.id === sel.id) {
+        navigate({ name: 'home' })
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : '删除失败', 'error')
+    }
+  }
+
+  async function actionRenameNotebook(box: string, name: string): Promise<void> {
+    const next = await promptDialog('重命名笔记本', '笔记本名称', name, '')
+    if (!next || next === name) return
+    try {
+      await api.renameNotebook(box, next)
+      toast('已重命名笔记本', 'ok')
+      await refreshTree()
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '重命名笔记本失败', 'error')
+    }
+  }
+
+  async function actionDeleteNotebook(box: string, name: string, count: number): Promise<void> {
+    const detail = count > 0 ? `其中的 ${count} 篇笔记` : '它（目前是空的）'
+    const ok = await confirmDialog(
+      '删除笔记本',
+      `确定删除「${name}」？${detail}会一并删掉，此操作不可撤销。`,
+      '删除',
+      true,
+    )
+    if (!ok) return
+    try {
+      await api.deleteNotebook(box)
+      toast(`已删除笔记本「${name}」`, 'ok')
+      if (store.selection?.box === box) store.selection = null
+      await refreshTree()
+      const route = currentRoute()
+      if (route.name === 'doc' && route.box === box) navigate({ name: 'home' })
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '删除笔记本失败', 'error')
+    }
+  }
+
+  /** 文档树上的右键 / 长按 / ⋯ 菜单（动作类型见 views/tree.ts 的 TreeAction） */
+  function treeAction(action: TreeAction): void {
+    switch (action.kind) {
+      case 'new-doc':
+        void actionNewDoc(action.box, action.parentId)
+        break
+      case 'rename-doc':
+        void actionRename({ box: action.box, id: action.id, title: action.title })
+        break
+      case 'delete-doc':
+        void actionDelete({ box: action.box, id: action.id, title: action.title })
+        break
+      case 'rename-box':
+        void actionRenameNotebook(action.box, action.name)
+        break
+      case 'delete-box':
+        void actionDeleteNotebook(action.box, action.name, action.count)
+        break
     }
   }
 
@@ -238,6 +314,7 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     if (!force && key === renderedHash && current) return
     // 路线一变（点文档、回首页、搜到结果…）就把窄屏的抽屉/面板收起来
     topbar?.closePanels()
+    homeNav.classList.toggle('is-active', route.name === 'home')
     renderedHash = key
     const seq = ++renderSeq
     current?.destroy()
@@ -294,6 +371,7 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
       tree.setSelection()
       topbar.refresh()
     },
+    onAction: treeAction,
   })
 
   topbar = createTopbar({
@@ -329,16 +407,16 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
     await openSession(app)
   }
 
-  /* 侧栏顶部的品牌行：云记笔记标识 + 回首页。
-     顶栏不再放品牌（手机上它白占宽度），首页入口改到侧栏，
-     窄屏时它就在抽屉最上方。 */
-  const brandHome = h(
+  /* 侧栏顶部不放品牌（首页 hero 已经有「云记笔记」标识，重复），
+     只放一个「首页」导航项：顶栏没有品牌之后，它是唯一的回首页入口，
+     窄屏时就在抽屉最上方，点得到。 */
+  const homeNav = h(
     'button',
-    { class: 'sidebar-brand', type: 'button', title: '回到首页' },
-    logoMark(22),
-    h('span', {}, '云记笔记'),
+    { class: 'tree-nav-item', type: 'button', title: '回到首页' },
+    h('span', { class: 'tree-nav-icon' }, '🏠'),
+    h('span', { class: 'tree-nav-label' }, '首页'),
   )
-  brandHome.addEventListener('click', () => {
+  homeNav.addEventListener('click', () => {
     topbar.closePanels()
     navigate({ name: 'home' })
   })
@@ -351,7 +429,7 @@ function mountApp(app: HTMLElement, session: SessionResp): () => void {
       h(
         'div',
         { class: 'shell-body' },
-        h('aside', { class: 'sidebar' }, brandHome, tree.element),
+        h('aside', { class: 'sidebar' }, h('div', { class: 'tree-nav' }, homeNav), tree.element),
         main,
       ),
       // 窄屏抽屉/动作面板打开时的遮罩，点一下收起（宽屏下被 CSS 藏起来）
