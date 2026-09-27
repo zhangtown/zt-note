@@ -58,6 +58,12 @@
 - **思源表格的权威结构去查 Lute 源码**：`node/table.go`/`table_row.go`/`table_cell.go` +
   `parse/table.go` + `render/html.go`（v1.7.8）——表头行在 `NodeTableHead` 里、`colgroup` 缺列要按
   `|` 补空列、单元格直接存行内节点（没有 `NodeParagraph`）。别照着自己的 `.sy` 猜格式
+- **发 Release 的包由 CI 构建（Go 1.24）**：本地 go-sdk 是 1.27，同一份源码编出来
+  二进制 8.29 MB / 包 3.5 MB，CI（1.24）是 7.45 MB / 3.1 MB——都能跑，但**别拿本地手工编的
+  包去顶 Release 附件**（会和说明里的 SHA-256、CI 产物不一致）。发版就 `git tag vX.Y.Z &&
+  git push --tags` 或跑 `release.yml` 的 workflow_dispatch
+- **`gh release upload` 的 `file#label` 只改显示标签，不改资源名**：想要带版本号的附件名
+  （`zt-note_0.5.0.fpk`）得先把文件复制成那个名字再上传（`release.yml` 里已经踩过这个坑）
 - **`cdp.clickElement(expr)` 收的是 JS 表达式不是 CSS 选择器**（自己写 UI 测试脚本时的坑）：
   传 `'.foo'` 会当成表达式报 `SyntaxError`，要传 `document.querySelector('.foo')`
 

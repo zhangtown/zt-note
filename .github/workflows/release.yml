@@ -140,14 +140,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          FPK=deploy/fnos-app/zt-note.fpk
+          # 附件名要带版本号：gh 的 file#label 只设显示标签，不动资源名，所以先复制成目标文件名
+          cp deploy/fnos-app/zt-note.fpk "/tmp/$ASSET"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "== Release $RELEASE_TAG 已存在，覆盖附件与说明"
-            gh release upload "$RELEASE_TAG" "$FPK#$ASSET" --clobber
+            gh release upload "$RELEASE_TAG" "/tmp/$ASSET" --clobber
             gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file /tmp/notes.md
           else
             echo "== 新建 Release $RELEASE_TAG"
-            gh release create "$RELEASE_TAG" "$FPK#$ASSET" \
+            gh release create "$RELEASE_TAG" "/tmp/$ASSET" \
               --title "$RELEASE_TAG" --notes-file /tmp/notes.md --verify-tag
           fi
           gh release view "$RELEASE_TAG" --json url,isDraft,assets \

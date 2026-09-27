@@ -72,6 +72,12 @@ CI（`.github/workflows/ci.yml`）：Go vet + 单测、前端类型检查/build/
 产 fpk 并作为 artifact 上传。`internal/webui/dist` 不入库，仓库里只放一个 `.gitkeep`
 （`go:embed all:dist` 要求目录存在；缺 `index.html` 时 `webui.Available()` 为 false）。
 
+发版（`.github/workflows/release.yml`）：`git tag vX.Y.Z && git push --tags` —— 跑一遍测试 →
+打包 → 建/更新对应的 GitHub Release 并挂上 `zt-note_X.Y.Z.fpk`（带大小与 SHA-256）。
+发布说明里手写的部分放 `docs/releases/X.Y.Z.md`（可选），自动生成部分包含下载/安装提示、
+校验和与「本次包含的提交」。tag 与 `deploy/fnos-app/zt-note/manifest` 里的 `version` 必须一致，
+不一致会直接失败（避免挂错包）。
+
 ## 数据与导入
 
 支持三种导入方式，全部只读源、不修改原始数据（重名自动加 `-2`、`-3` 后缀）：
