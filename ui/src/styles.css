@@ -2148,7 +2148,11 @@ mark {
   position: fixed;
   z-index: 60;
   min-width: 156px;
-  max-width: min(280px, calc(100vw - 16px));
+  max-width: min(420px, calc(100vw - 16px));
+  /* 条目多了（正文右键）也不能超过一屏：超出自己在菜单里滚，而不是把菜单顶出屏幕 */
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -2156,23 +2160,39 @@ mark {
   box-shadow: var(--shadow-2);
 }
 
+/* 两列：条目多时靠它把高度减半（正文右键），窄屏在文件末尾的媒体查询里退回单列 */
+.ctx-menu.is-two-col {
+  display: flex;
+  align-items: flex-start;
+}
+
+.ctx-menu.is-two-col .ctx-menu-col {
+  min-width: 172px;
+}
+
+.ctx-menu.is-two-col .ctx-menu-col + .ctx-menu-col {
+  margin-left: 4px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+}
+
 .ctx-menu-sep {
   height: 1px;
-  margin: 4px 6px;
+  margin: 3px 6px;
   background: var(--border);
 }
 
 .ctx-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 7px 8px;
+  padding: 5px 8px;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
   font: inherit;
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -2203,9 +2223,12 @@ mark {
 }
 
 .ctx-menu-icon {
-  flex: 0 0 18px;
+  /* 固定窄格 + 不换行：图标只能是单字符，否则会竖着排成三行把菜单拉爆 */
+  flex: 0 0 20px;
   text-align: center;
   font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .ctx-menu-label {
@@ -2218,10 +2241,19 @@ mark {
 
 .ctx-menu-hint {
   flex: 0 0 auto;
-  margin-left: 12px;
+  margin-left: 10px;
   color: var(--text-muted);
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 窄屏能不能放下两列由 JS 量真实宽度决定（见 views/menu.ts 的 openMenu），
+   放不下时会自己去掉 .is-two-col；此处只保证单列状态下的两条分界线不留痕 */
+.ctx-menu:not(.is-two-col) .ctx-menu-col + .ctx-menu-col {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
 }
 
 /* 树行尾的「⋯」：桌面悬停才显形，触摸屏常驻（那里没有右键） */

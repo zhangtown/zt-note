@@ -57,25 +57,25 @@ interface ToolItem {
   active?: (editor: Editor) => boolean
 }
 
-/** 正文右键菜单的条目定义：图标列用工具条上的短标签，文字用中文名，右侧给快捷键。 */
-const CTX_ITEMS: Record<string, { label: string; hint?: string }> = {
-  undo: { label: '撤销', hint: 'Ctrl+Z' },
-  redo: { label: '重做', hint: 'Ctrl+Shift+Z' },
-  bold: { label: '加粗', hint: 'Ctrl+B' },
-  italic: { label: '斜体', hint: 'Ctrl+I' },
-  strike: { label: '删除线' },
-  code: { label: '行内代码', hint: 'Ctrl+E' },
-  h1: { label: '一级标题', hint: 'Ctrl+Alt+1' },
-  h2: { label: '二级标题', hint: 'Ctrl+Alt+2' },
-  h3: { label: '三级标题', hint: 'Ctrl+Alt+3' },
-  bulletList: { label: '无序列表', hint: 'Ctrl+Shift+8' },
-  orderedList: { label: '有序列表', hint: 'Ctrl+Shift+7' },
-  blockquote: { label: '引用', hint: 'Ctrl+Shift+B' },
-  codeBlock: { label: '代码块', hint: 'Ctrl+Alt+C' },
-  horizontalRule: { label: '分隔线' },
-  link: { label: '插入 / 修改链接', hint: 'Ctrl+K' },
-  image: { label: '插入图片' },
-  table: { label: '插入表格' },
+/** 正文右键菜单的条目定义：图标列用单字符（工具条上的长标签会在这个窄格里竖排换行），文字用中文名，右侧给快捷键。 */
+const CTX_ITEMS: Record<string, { label: string; hint?: string; icon?: string }> = {
+  undo: { label: '撤销', hint: 'Ctrl+Z', icon: '↶' },
+  redo: { label: '重做', hint: 'Ctrl+Shift+Z', icon: '↷' },
+  bold: { label: '加粗', hint: 'Ctrl+B', icon: 'B' },
+  italic: { label: '斜体', hint: 'Ctrl+I', icon: 'I' },
+  strike: { label: '删除线', icon: 'S' },
+  code: { label: '行内代码', hint: 'Ctrl+E', icon: '</>' },
+  h1: { label: '一级标题', hint: 'Ctrl+Alt+1', icon: 'H1' },
+  h2: { label: '二级标题', hint: 'Ctrl+Alt+2', icon: 'H2' },
+  h3: { label: '三级标题', hint: 'Ctrl+Alt+3', icon: 'H3' },
+  bulletList: { label: '无序列表', hint: 'Ctrl+Shift+8', icon: '•' },
+  orderedList: { label: '有序列表', hint: 'Ctrl+Shift+7', icon: '1.' },
+  blockquote: { label: '引用', hint: 'Ctrl+Shift+B', icon: '❝' },
+  codeBlock: { label: '代码块', hint: 'Ctrl+Alt+C', icon: '{}' },
+  horizontalRule: { label: '分隔线', icon: '—' },
+  link: { label: '插入 / 修改链接', hint: 'Ctrl+K', icon: '🔗' },
+  image: { label: '插入图片', icon: '🖼' },
+  table: { label: '插入表格', icon: '▦' },
 }
 
 /** 正文右键菜单：常用格式 + 剪贴板 + 撤销重做（表格里再多一排表格操作）。 */
@@ -86,7 +86,7 @@ function buildContextMenu(editor: Editor): MenuItem[] {
     const meta = CTX_ITEMS[id]
     if (!tool || !meta) return null
     return {
-      icon: tool.label,
+      icon: meta.icon ?? tool.label,
       label: meta.label,
       hint: meta.hint,
       onClick: () => {
@@ -135,7 +135,9 @@ function buildContextMenu(editor: Editor): MenuItem[] {
   })
   items.push({ separator: true })
   for (const id of ['bold', 'italic', 'strike', 'code']) push(item(id))
-  items.push({ separator: true })
+  // 分列（见 views/menu.ts 的 column）：左列「历史 + 剪贴板 + 行内格式」，右列「块级 + 插入」——
+  // 不分列的话二十多条竖着排会超过一屏
+  items.push({ column: true })
   for (const id of ['h1', 'h2', 'h3']) push(item(id))
   items.push({ separator: true })
   for (const id of ['bulletList', 'orderedList', 'blockquote', 'codeBlock', 'horizontalRule']) push(item(id))
@@ -547,6 +549,17 @@ export function createEditor(opts: { blocks: Block[]; onChange?: () => void }): 
     content: { type: 'doc', content: [] },
     editorProps: {
       attributes: { class: 'tiptap prose', spellcheck: 'false' },
+      // 右键落在当前选区里时不要动选区：不然「选中文字 → 右键 → 加粗 / 引用」就没有对象了
+      // （ProseMirror 默认按右键位置重设选区，那是编辑器里的“移动光标”语义，不是右键菜单语义）
+      handleDOMEvents: {
+        mousedown: (view, event) => {
+          if (event.button !== 2 || view.state.selection.empty) return false
+          const at = view.posAtCoords({ left: event.clientX, top: event.clientY })
+          if (!at) return false
+          const { from, to } = view.state.selection
+          return at.pos >= from && at.pos <= to
+        },
+      },
       // 截图直接 Ctrl+V：拦截剪贴板里的图片文件，上传后插到光标处
       handlePaste: (view, event) => {
         const files = imageFilesFrom(event.clipboardData)
@@ -674,10 +687,14 @@ export function createEditor(opts: { blocks: Block[]; onChange?: () => void }): 
   editor.on('selectionUpdate', refresh)
   refresh()
 
-  // 正文右键菜单：先把光标挪到点击处（否则格式操作会作用在旧位置），再弹常用命令
+  // 正文右键菜单：点在选区外才把光标挪过去（否则格式操作会作用在旧位置），
+  // 点在当前选区里则保留选区——「选中一段 → 右键 → 加粗 / 引用」才有对象
   editorHost.addEventListener('contextmenu', (e: MouseEvent) => {
     const pos = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })?.pos
-    if (typeof pos === 'number') editor.commands.setTextSelection(pos)
+    const sel = editor.state.selection
+    if (typeof pos === 'number' && (sel.empty || pos < sel.from || pos > sel.to)) {
+      editor.commands.setTextSelection(pos)
+    }
     e.preventDefault()
     openMenu(e.clientX, e.clientY, buildContextMenu(editor))
   })

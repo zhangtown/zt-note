@@ -10,6 +10,8 @@ export interface MenuItem {
   hint?: string
   /** 分隔线：只需要设置 separator: true，label 会被忽略 */
   separator?: boolean
+  /** 分列：从这里开始排到下一列（仅两列菜单用，如正文右键；窄屏会自动退回单列） */
+  column?: boolean
   /** 危险操作（删除之类）标红 */
   danger?: boolean
   disabled?: boolean
@@ -36,33 +38,47 @@ export function menuOpen(): boolean {
   return current !== null
 }
 
+function itemButton(item: MenuItem): HTMLElement {
+  const btn = h(
+    'button',
+    {
+      class: `ctx-menu-item${item.danger ? ' is-danger' : ''}`,
+      type: 'button',
+      role: 'menuitem',
+      disabled: item.disabled ? true : undefined,
+    },
+    h('span', { class: 'ctx-menu-icon' }, item.icon ?? ''),
+    h('span', { class: 'ctx-menu-label' }, item.label ?? ''),
+    item.hint ? h('span', { class: 'ctx-menu-hint' }, item.hint) : null,
+  )
+  btn.addEventListener('click', (e: Event) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (item.disabled) return
+    closeMenu()
+    item.onClick?.()
+  })
+  return btn
+}
+
 function build(items: MenuItem[]): HTMLElement {
-  const el = h('div', { class: 'ctx-menu', role: 'menu' })
+  // 分成若干列：条目多的时候竖着排会超出一屏，`{ column: true }` 后面的条目换到下一列
+  const columns: MenuItem[][] = [[]]
   for (const item of items) {
-    if (item.separator) {
-      el.appendChild(h('div', { class: 'ctx-menu-sep' }))
+    if (item.column) {
+      columns.push([])
       continue
     }
-    const btn = h(
-      'button',
-      {
-        class: `ctx-menu-item${item.danger ? ' is-danger' : ''}`,
-        type: 'button',
-        role: 'menuitem',
-        disabled: item.disabled ? true : undefined,
-      },
-      h('span', { class: 'ctx-menu-icon' }, item.icon ?? ''),
-      h('span', { class: 'ctx-menu-label' }, item.label ?? ''),
-      item.hint ? h('span', { class: 'ctx-menu-hint' }, item.hint) : null,
-    )
-    btn.addEventListener('click', (e: Event) => {
-      e.preventDefault()
-      e.stopPropagation()
-      if (item.disabled) return
-      closeMenu()
-      item.onClick?.()
-    })
-    el.appendChild(btn)
+    columns[columns.length - 1].push(item)
+  }
+  const cols = columns.filter((c) => c.length > 0)
+  const el = h('div', { class: `ctx-menu${cols.length > 1 ? ' is-two-col' : ''}`, role: 'menu' })
+  for (const col of cols) {
+    const box = cols.length > 1 ? h('div', { class: 'ctx-menu-col' }) : el
+    for (const item of col) {
+      box.appendChild(item.separator ? h('div', { class: 'ctx-menu-sep' }) : itemButton(item))
+    }
+    if (box !== el) el.appendChild(box)
   }
   return el
 }
@@ -79,6 +95,11 @@ export function openMenu(x: number, y: number, items: MenuItem[]): boolean {
   const el = build(items)
   el.style.visibility = 'hidden'
   document.body.appendChild(el)
+  // 两列版在窄屏可能放不下：量一次真实内容宽度（scrollWidth 不受 max-width 截断影响），
+  // 超出可用宽度就退回单列。（比拍媒体查询断点准：图标/文案改了就自动跟着变）
+  if (el.classList.contains('is-two-col') && el.scrollWidth > window.innerWidth - 12) {
+    el.classList.remove('is-two-col')
+  }
   const rect = el.getBoundingClientRect()
   const left = Math.max(6, Math.min(x, window.innerWidth - rect.width - 6))
   const top = Math.max(6, Math.min(y, window.innerHeight - rect.height - 6))
