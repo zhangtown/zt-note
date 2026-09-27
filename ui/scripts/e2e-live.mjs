@@ -1940,6 +1940,220 @@ async function main() {
     skip('12-表格', '表格链路（编辑模式前置步骤失败）')
   }
 
+  /* --- 13. 窄屏（手机）适配：抽屉 / 动作面板 / 触控尺寸 / 表格自滚 --- */
+  log('\n[13] 窄屏适配（模拟 390×844 手机视口）')
+  {
+    const mobDoc = { box: target?.box ?? '', id: '' }
+    const MOB_TEXT = `窄屏${Date.now() % 100000}`
+    // 不可断行的长串：逼表格的 max-content 宽度超过手机视口
+    const WIDE_TEXT = 'ZtNoteWideTableCell'.repeat(5)
+    try {
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 2,
+        mobile: true,
+      })
+      await sleep(250)
+
+      const base = await cdp.evalJs(`(() => {
+        const burger = document.querySelector('.topbar-burger')
+        const more = document.querySelector('.topbar-more')
+        const side = document.querySelector('.sidebar')
+        const actions = document.querySelector('.topbar-actions')
+        const sr = side.getBoundingClientRect()
+        const row = document.querySelector('.tree-row')
+        return {
+          innerWidth: window.innerWidth,
+          burger: burger ? getComputedStyle(burger).display : 'missing',
+          more: more ? getComputedStyle(more).display : 'missing',
+          sidePos: getComputedStyle(side).position,
+          sideRight: Math.round(sr.right),
+          sideTop: Math.round(sr.top),
+          actions: getComputedStyle(actions).display,
+          version: getComputedStyle(document.querySelector('.version')).display,
+          rowH: row ? Math.round(row.getBoundingClientRect().height) : 0,
+          searchFont: parseFloat(getComputedStyle(document.querySelector('.search-input')).fontSize),
+          overflowX: document.documentElement.scrollWidth - window.innerWidth,
+        }
+      })()`)
+      check('13-窄屏', '视口切到 390×844（innerWidth=390）', base?.innerWidth === 390, JSON.stringify(base?.innerWidth))
+      check('13-窄屏', '☰ / ⋯ 两个按钮在窄屏出现（宽屏隐藏）', base?.burger !== 'none' && base?.more !== 'none', JSON.stringify({ burger: base?.burger, more: base?.more }))
+      check('13-窄屏', '侧栏离开文档流变抽屉：position:fixed 且收在屏幕外', base?.sidePos === 'fixed' && base?.sideRight <= 1 && base?.sideTop > 0, JSON.stringify({ position: base?.sidePos, right: base?.sideRight, top: base?.sideTop }))
+      check('13-窄屏', '动作面板默认收起、版本号平时不占地方', base?.actions === 'none' && base?.version === 'none', JSON.stringify({ actions: base?.actions, version: base?.version }))
+      check('13-窄屏', '目录行高 ≥38px、搜索框字号 ≥16px（好点、iOS 不缩放）', (base?.rowH ?? 0) >= 38 && (base?.searchFont ?? 0) >= 16, JSON.stringify({ rowH: base?.rowH, searchFont: base?.searchFont }))
+      check('13-窄屏', '页面无横向溢出（scrollWidth ≤ innerWidth）', (base?.overflowX ?? 99) <= 1, `溢出 ${base?.overflowX}px`)
+
+      /* ☰ 抽屉：打开 → 遮罩关闭 → 再打开 → 点文档自动收起 */
+      await cdp.clickElement(`document.querySelector('.topbar-burger')`, '☰ 文档树按钮')
+      await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().left >= -1`, 3000, '抽屉滑入完成')
+      const opened = await cdp.evalJs(`(() => {
+        const r = document.querySelector('.sidebar').getBoundingClientRect()
+        return {
+          cls: document.body.classList.contains('is-drawer-open'),
+          left: Math.round(r.left), width: Math.round(r.width),
+          mask: getComputedStyle(document.querySelector('.drawer-mask')).display,
+        }
+      })()`)
+      check('13-抽屉', '点 ☰ 抽屉滑入屏内（左边缘≥0）且遮罩出现', opened?.cls === true && opened?.left >= 0 && opened?.width > 120 && opened?.mask === 'block', JSON.stringify(opened))
+      await cdp.screenshot('13-drawer-open')
+
+      await cdp.clickElement(`document.querySelector('.drawer-mask')`, '抽屉遮罩')
+      await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().right <= 1`, 3000, '抽屉收起动画完成')
+      const closed = await cdp.evalJs(`(() => {
+        const r = document.querySelector('.sidebar').getBoundingClientRect()
+        return {
+          cls: document.body.classList.contains('is-drawer-open'),
+          right: Math.round(r.right),
+          mask: getComputedStyle(document.querySelector('.drawer-mask')).display,
+        }
+      })()`)
+      check('13-抽屉', '点遮罩抽屉收起（回到屏外 + 遮罩隐藏）', closed?.cls === false && closed?.right <= 1 && closed?.mask === 'none', JSON.stringify(closed))
+
+      /* ⋯ 动作面板 */
+      await cdp.clickElement(`document.querySelector('.topbar-more')`, '⋯ 更多操作按钮')
+      const moreOpen = await cdp.evalJs(`(() => {
+        const a = document.querySelector('.topbar-actions')
+        const r = a.getBoundingClientRect()
+        const btns = Array.prototype.slice.call(a.querySelectorAll('.btn'))
+        return {
+          cls: document.body.classList.contains('is-more-open'),
+          visible: getComputedStyle(a).display !== 'none' && r.height > 0,
+          height: Math.round(r.height), top: Math.round(r.top), bottom: Math.round(r.bottom),
+          btnHeights: btns.map((b) => Math.round(b.getBoundingClientRect().height)),
+          inlineCount: btns.filter((b) => getComputedStyle(b).display !== 'none').length,
+        }
+      })()`)
+      check('13-面板', '点 ⋯ 动作面板展开（竖排面板 + 各动作按钮）', moreOpen?.cls === true && moreOpen?.visible === true && (moreOpen?.inlineCount ?? 0) >= 4, JSON.stringify(moreOpen))
+      check('13-面板', '面板里的按钮高 ≥40px（手指好点）', (moreOpen?.btnHeights ?? []).every((v) => v >= 40), JSON.stringify(moreOpen?.btnHeights))
+      check('13-面板', '面板整体在视口内（top 在顶栏下方、不越出屏幕）', (moreOpen?.top ?? 0) >= 46 && (moreOpen?.bottom ?? 9999) <= 844, JSON.stringify({ top: moreOpen?.top, bottom: moreOpen?.bottom }))
+      await cdp.screenshot('13-more-open')
+
+      /* 从抽屉里点文档：抽屉自动收起 + 正常打开 */
+      await cdp.clickElement(`document.querySelector('.topbar-burger')`, '☰ 文档树按钮')
+      await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().left >= -1`, 3000, '抽屉滑入完成')
+      await cdp.clickElement(treeDocRow(DOC_TITLE), `抽屉里的《${DOC_TITLE}》`)
+      await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现（窄屏）')
+      await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().right <= 1`, 3000, '选中文档后抽屉收起')
+      const afterPick = await cdp.evalJs(`(() => {
+        const r = document.querySelector('.sidebar').getBoundingClientRect()
+        return {
+          drawer: document.body.classList.contains('is-drawer-open'),
+          right: Math.round(r.right),
+          title: (document.querySelector('.doc-title') || {}).textContent ? document.querySelector('.doc-title').textContent.trim() : '',
+          overflowX: document.documentElement.scrollWidth - window.innerWidth,
+          docBodyW: Math.round(document.querySelector('.doc-body').getBoundingClientRect().width),
+        }
+      })()`)
+      check('13-抽屉', '点文档后抽屉自动收起并打开该文档', afterPick?.drawer === false && afterPick?.right <= 1 && afterPick?.title === DOC_TITLE, JSON.stringify(afterPick))
+      check('13-阅读', '窄屏阅读视图无横向溢出（doc-body ≤ 视口）', (afterPick?.overflowX ?? 99) <= 1 && (afterPick?.docBodyW ?? 999) <= 390, JSON.stringify({ overflowX: afterPick?.overflowX, docBodyW: afterPick?.docBodyW }))
+
+      /* 编辑区与表格（窄屏真插入、真输入、真保存） */
+      if (editOk) {
+        const created = await postJson(`${API}/doc/create`, { box: mobDoc.box, title: 'E2E 窄屏测试' })
+        mobDoc.id = created.data?.id ?? ''
+        check('13-编辑', '新建测试文档（走 API）', Boolean(mobDoc.id), `${created.status} ${created.text.slice(0, 120)}`)
+        await nav(APP_URL, '回到首页')
+        await cdp.waitFor(`!!document.querySelector('.tree-doc')`, 15000, '文档树渲染')
+        // 窄屏下目录在抽屉里：先点 ☰ 拉开，再点文档（跟真人一样）
+        await cdp.clickElement(`document.querySelector('.topbar-burger')`, '☰ 文档树按钮')
+        await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().left >= -1`, 3000, '抽屉滑入完成')
+        await cdp.clickElement(treeDocRow('E2E 窄屏测试'), '文档树《E2E 窄屏测试》')
+        await cdp.waitFor(`document.querySelector('.sidebar').getBoundingClientRect().right <= 1`, 3000, '选中文档后抽屉收起')
+        await cdp.waitFor(`!!document.querySelector('.doc-html')`, 15000, '阅读视图出现')
+        await cdp.clickElement(byText('.doc-actions button', '编辑'), '「编辑」按钮')
+        await cdp.waitFor(`!!document.querySelector('.ProseMirror')`, 15000, '编辑器出现')
+        await sleep(300)
+
+        const ed = await cdp.evalJs(`(() => {
+          const tb = document.querySelectorAll('.zt-toolbar .tb-btn')
+          const heights = Array.prototype.slice.call(tb).map((b) => Math.round(b.getBoundingClientRect().height))
+          const cs = getComputedStyle(document.querySelector('.zt-editor-scroll'))
+          return {
+            btnCount: tb.length,
+            minBtn: heights.length ? Math.min.apply(null, heights) : 0,
+            editorFont: parseFloat(getComputedStyle(document.querySelector('.ProseMirror')).fontSize),
+            maxH: cs.maxHeight, minH: cs.minHeight,
+            innerHeight: window.innerHeight,
+            toolbarBottom: Math.round(document.querySelector('.zt-toolbar').getBoundingClientRect().bottom),
+            overflowX: document.documentElement.scrollWidth - window.innerWidth,
+          }
+        })()`)
+        check('13-编辑', '工具条按钮高 ≥32px（触控目标）', (ed?.minBtn ?? 0) >= 32, JSON.stringify({ 共: ed?.btnCount, 最小: ed?.minBtn }))
+        check('13-编辑', '编辑区字号 ≥16px（iOS 聚焦不缩放）', (ed?.editorFont ?? 0) >= 16, String(ed?.editorFont))
+        // 视觉行高按视口算：100dvh - 210px（不是桌面端的 100vh - 300px）
+        check(
+          '13-编辑',
+          '编辑区高度按手机视口算（100dvh-210px）且下限 240px',
+          Math.abs(parseFloat(String(ed?.maxH)) - ((ed?.innerHeight ?? 0) - 210)) <= 2 && ed?.minH === '240px',
+          JSON.stringify({ maxH: ed?.maxH, 期望: `${(ed?.innerHeight ?? 0) - 210}px`, minH: ed?.minH }),
+        )
+        check('13-编辑', '工具条在首屏内（bottom < 视口高）', (ed?.toolbarBottom ?? 9999) < 844, String(ed?.toolbarBottom))
+
+        await cdp.clickElement(byText('.zt-toolbar .tb-btn', '表格'), '窄屏工具条「表格」按钮')
+        await cdp.waitFor(`document.querySelectorAll('.ProseMirror table').length === 1`, 8000, '窄屏下插入表格')
+        // 往第一格塞长文本：逼表格超过视口宽，看它自己滚还是把整页撑宽
+        await cdp.evalJs(`(() => {
+          const p = document.querySelector('.ProseMirror table th p, .ProseMirror table td p')
+          if (!p) return false
+          const r = document.createRange(); r.selectNodeContents(p)
+          const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+          return true
+        })()`)
+        await cdp.insertText(MOB_TEXT + WIDE_TEXT)
+        await sleep(250)
+        const tbl = await cdp.evalJs(`(() => {
+          const t = document.querySelector('.ProseMirror table')
+          const r = t.getBoundingClientRect()
+          const cs = getComputedStyle(t)
+          return {
+            display: cs.display, overflowX: cs.overflowX,
+            rows: t.rows.length, cols: t.rows[0] ? t.rows[0].cells.length : 0,
+            boxW: Math.round(r.width), scrollW: Math.round(t.scrollWidth), clientW: Math.round(t.clientWidth),
+            pageOverflowX: document.documentElement.scrollWidth - window.innerWidth,
+            text: (t.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30),
+          }
+        })()`)
+        check('13-表格', '窄屏插入 3×3 表格成功', tbl?.rows === 3 && tbl?.cols === 3, JSON.stringify({ rows: tbl?.rows, cols: tbl?.cols }))
+        check('13-表格', '单元格可点可输入（display:block 不影响编辑）', String(tbl?.text || '').includes(MOB_TEXT), JSON.stringify(tbl?.text))
+        check(
+          '13-表格',
+          '超宽表格自己框里横滑（scrollW > clientW），表格盒宽仍不超视口',
+          (tbl?.scrollW ?? 0) > (tbl?.clientW ?? 0) && (tbl?.boxW ?? 999) <= 390 && tbl?.display === 'block' && tbl?.overflowX === 'auto',
+          JSON.stringify({ boxW: tbl?.boxW, scrollW: tbl?.scrollW, clientW: tbl?.clientW, display: tbl?.display, overflowX: tbl?.overflowX }),
+        )
+        check('13-表格', '表格撑宽时整页仍无横向溢出', (tbl?.pageOverflowX ?? 99) <= 1, `溢出 ${tbl?.pageOverflowX}px`)
+        await cdp.screenshot('13-mobile-table')
+
+        // 保存（窄屏下 Ctrl+S）并核对落盘
+        await cdp.pressKey('s', { code: 'KeyS', vk: 83, modifiers: 2, text: '' })
+        await cdp.waitFor(`!!document.querySelector('.doc-html')`, TOAST_TIMEOUT, '窄屏保存后回阅读模式')
+        await sleep(250)
+        const syM = readSy(mobDoc.box, mobDoc.id)
+        check('13-磁盘', '窄屏编辑的表格落到 .sy（NodeTable + 文字）', syM.json?.Children?.[0]?.Type === 'NodeTable' && syM.raw.includes(MOB_TEXT), JSON.stringify((syM.json?.Children ?? []).map((n) => n.Type)))
+        ctx.mobile = { opened, moreOpen, ed, tbl, sy: syM.json?.Children?.[0]?.Type }
+      } else {
+        skip('13-编辑', '窄屏编辑/表格链路（编辑模式前置步骤失败）')
+      }
+    } catch (err) {
+      check('13-窄屏', '窄屏适配链路执行', false, err instanceof Error ? err.message : String(err))
+    } finally {
+      try {
+        await cdp.send('Emulation.clearDeviceMetricsOverride')
+      } catch {
+        /* 忽略 */
+      }
+      if (mobDoc.id) {
+        try {
+          await postJson(`${API}/doc/delete`, { box: mobDoc.box, id: mobDoc.id })
+          check('13-窄屏', '清理：测试文档已删除', !existsSync(join(WS, 'data', mobDoc.box, `${mobDoc.id}.sy`)), '')
+        } catch {
+          /* 清理失败不影响结论 */
+        }
+      }
+    }
+  }
+
   /* --- 10. 前端异常汇总 --- */
   log('\n[10] 前端异常汇总')
   await sleep(300)

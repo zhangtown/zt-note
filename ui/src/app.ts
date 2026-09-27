@@ -133,6 +133,8 @@ export function bootstrap(): void {
   async function render(route: Route, force = false): Promise<void> {
     const key = location.hash || '#/'
     if (!force && key === renderedHash && current) return
+    // 路线一变（点文档、回首页、搜到结果…）就把窄屏的抽屉/面板收起来
+    topbar?.closePanels()
     renderedHash = key
     const seq = ++renderSeq
     current?.destroy()
@@ -176,6 +178,7 @@ export function bootstrap(): void {
 
   tree = createTreeView({
     onSelectDoc: (box, id) => {
+      topbar?.closePanels()
       const sel = store.selection
       if (sel?.kind === 'doc' && sel.box === box && sel.id === id) {
         tree.setSelection()
@@ -207,6 +210,12 @@ export function bootstrap(): void {
       { class: 'shell' },
       topbar.element,
       h('div', { class: 'shell-body' }, h('aside', { class: 'sidebar' }, tree.element), main),
+      // 窄屏抽屉/动作面板打开时的遮罩，点一下收起（宽屏下被 CSS 藏起来）
+      h('div', {
+        class: 'drawer-mask',
+        'aria-hidden': 'true',
+        onclick: () => topbar.closePanels(),
+      }),
     ),
   )
 

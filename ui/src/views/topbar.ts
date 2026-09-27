@@ -20,6 +20,8 @@ export interface TopbarHandle {
   setHealth: (error: string) => void
   /** 依据当前选中项刷新按钮可用状态 */
   refresh: () => void
+  /** 收起窄屏下的抽屉 / 动作面板（宽屏下是空操作） */
+  closePanels: () => void
 }
 
 export function createTopbar(ctx: TopbarCtx): TopbarHandle {
@@ -34,6 +36,46 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
   btnRename.addEventListener('click', ctx.onRename)
   btnDelete.addEventListener('click', ctx.onDelete)
   btnImport.addEventListener('click', ctx.onImport)
+
+  /* ---- 窄屏：抽屉（☰）与动作面板（⋯） ----
+     两个按钮只在 ≤720px 处可见（宽屏由 CSS 藏起来），
+     在这里也只是切 body 上的类，宽屏下没有副作用。 */
+  const btnDrawer = h(
+    'button',
+    { class: 'btn topbar-burger', type: 'button', title: '文档树', 'aria-label': '文档树' },
+    '☰',
+  )
+  const btnMore = h(
+    'button',
+    { class: 'btn topbar-more', type: 'button', title: '更多操作', 'aria-label': '更多操作' },
+    '⋯',
+  )
+
+  function closePanels(): void {
+    document.body.classList.remove('is-drawer-open', 'is-more-open')
+  }
+
+  function togglePanel(cls: 'is-drawer-open' | 'is-more-open'): void {
+    const other = cls === 'is-drawer-open' ? 'is-more-open' : 'is-drawer-open'
+    document.body.classList.remove(other)
+    document.body.classList.toggle(cls)
+  }
+
+  btnDrawer.addEventListener('click', (e) => {
+    e.stopPropagation()
+    togglePanel('is-drawer-open')
+  })
+  btnMore.addEventListener('click', (e) => {
+    e.stopPropagation()
+    togglePanel('is-more-open')
+  })
+  // 窄屏下点了面板里的动作就把面板收起来
+  for (const btn of [btnNewNb, btnNewDoc, btnRename, btnDelete, btnImport]) {
+    btn.addEventListener('click', () => closePanels())
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePanels()
+  })
 
   /* ---- 导出下拉 ---- */
   const btnExport = h('button', { class: 'btn', type: 'button' }, '导出 ▾')
@@ -83,7 +125,10 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
       closeMenu()
     }
   })
-  document.addEventListener('click', () => closeMenu())
+  document.addEventListener('click', () => {
+    closeMenu()
+    closePanels()
+  })
 
   const exportWrap = h('div', { class: 'menu-wrap' }, btnExport, menu)
 
@@ -126,7 +171,7 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
   const element = h(
     'header',
     { class: 'topbar' },
-    h('div', { class: 'topbar-left' }, brand),
+    h('div', { class: 'topbar-left' }, btnDrawer, brand),
     h(
       'div',
       { class: 'topbar-actions' },
@@ -139,7 +184,7 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
       btnImport,
       exportWrap,
     ),
-    h('div', { class: 'topbar-right' }, searchInput, version),
+    h('div', { class: 'topbar-right' }, searchInput, version, btnMore),
   )
 
   function refresh(): void {
@@ -171,5 +216,5 @@ export function createTopbar(ctx: TopbarCtx): TopbarHandle {
   }
 
   refresh()
-  return { element, setHealth, refresh }
+  return { element, setHealth, refresh, closePanels }
 }

@@ -12,16 +12,18 @@
 | 5 | 保真校验 | `tools/sycheck`：12/12 篇 `.sy` 逐字节一致（227 块、22 资源） |
 | 6 | 前端 | `ui/`（Vite + TipTap）：树/文档/编辑/搜索/导入导出；产物内嵌 `internal/webui/dist` |
 | 7 | 接口级端到端 | `.test/e2e.py` 50/50 全绿（含“不改动直接保存 → 文件字节不变”、搜索 blockId 契约、资源上传/命名/引用改写） |
-| 8 | UI 联调（严格模式） | `ui/scripts/e2e-live.mjs` 105/105 全绿：真实 Go 后端 + 无头 Chrome 走完「点开 → 编辑 → 保存 → 磁盘核对 → 无改动保存 → 搜索整篇/块定位 → 导出比对 → 粘贴上传图片 → 表格插入/增删行列/`.sy` 往返」，报告 `ui/E2E-LIVE-REPORT.md` |
+| 8 | UI 联调（严格模式） | `ui/scripts/e2e-live.mjs` 130/130 全绿：真实 Go 后端 + 无头 Chrome 走完「点开 → 编辑 → 保存 → 磁盘核对 → 无改动保存 → 搜索整篇/块定位 → 导出比对 → 粘贴上传图片 → 表格插入/增删行列/`.sy` 往返 → 手机视口（390×844）抽屉/面板/窄屏表格」，报告 `ui/E2E-LIVE-REPORT.md` |
 | 9 | 打包与实机部署 | 已装到 your-nas.local，当前版本 0.3.0（`bash deploy/fnos-app/install.sh --no-bump` 一键升级；`install-fpk` 对已装应用无效，见下文坑）。实机核对（走应用 socket API）：12 篇文档、22 个资源、17 个图片节点请求全部 200，一行多图 `div.img-rows` 与块 `data-node-id` 正常，搜索标题命中按契约不带 `blockId` |
 | 10 | 图片与资源 | 编辑器粘贴/拖拽/按钮上传（`api/assets/upload`）；排版保真（`parent-style`/`style` 一行多图）；修掉“导入后图片全 404”（`internal/importer` 资源改名未改写引用） |
 | 11 | 表格编辑 | 思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格双向映射（`internal/siyuan/pm.go` 的 `tableToPM`/`pmTableToSy`、`model.go` 的 `TableRows`/`TableColumns`/`TableSpan`）；插入 3×3 + 浮动操作条；`colgroup`/对齐/合并单元格往返。证据：`internal/siyuan/table_test.go` 全绿（含“只有 `NodeTableHead` 的表格不能丢表头行”“未改动表格 sha 不变”），前端逻辑测试 34/34，浏览器 e2e 20 项表格断言全绿 |
+| 12 | 窄屏 / 手机适配 | 纯 CSS 媒体查询（≤720px）：侧栏改抽屉（`body.is-drawer-open` + `.drawer-mask`）、动作收进 ☰/⋯ 面板、目录行 38px / 工具条按钮 32px / 输入框 36px、搜索框与编辑区 ≥16px（免 iOS 聚焦缩放）、阅读与编辑区的表格 `display:block + overflow-x:auto` 自滚、编辑区 `calc(100dvh - 210px)`。新增 `ui/views/topbar.ts` 的 ☰/⋯ 与 `TopbarHandle.closePanels`。证据：e2e 第 13 节 25 项断言全绿（390×844 模拟手机，含“窄屏真插入表格并输入 → 保存后 `.sy` 是 NodeTable”、整页零横向溢出） |
 
 ## 待办
 
 - [ ] 实机逐篇点开核对渲染（已装可访问，人工校对未做）
 - [x] 图片上传的 UI（粘贴/拖拽/「图片」按钮 → `api/assets/upload`，已接入）
 - [x] 推送远端 + CI（`.github/workflows/ci.yml`：go / 前端 / fpk 三个 job）
+- [x] 移动端适配（窄屏抽屉 + 动作面板 + 表格自滚 + 触控尺寸，e2e 第 13 节覆盖）
 - [ ] 块引用 / 块属性面板（`.sy` 里已保留原始字段，属于“读得懂写不回”）
 - [x] 表格编辑（思源 `NodeTable`/`NodeTableHead` ⇄ TipTap 表格；插入、增删行列、表头行、`.sy` 往返）
 - [ ] 标签、书签、日记本等思源衍生块

@@ -715,15 +715,7 @@ a {
   pointer-events: none;
 }
 
-/* 窄屏：阅读视图的宽表格横向滑动，别把整页撑破（编辑区不动，免得影响单元格点击） */
-@media (max-width: 720px) {
-  .prose:not(.tiptap) table {
-    display: block;
-    width: max-content;
-    max-width: 100%;
-    overflow-x: auto;
-  }
-}
+/* 窄屏（≤720px）规则统一放在文件末尾的「窄屏适配」一节 */
 
 .prose a {
   text-decoration: underline;
@@ -1334,5 +1326,293 @@ mark {
   from {
     opacity: 0;
     transform: translateY(6px);
+  }
+}
+
+/* ---------------- 窄屏适配（手机 / 竖屏小窗） ----------------
+   宽度 ≤720px 时：左侧栏变成抽屉，顶栏只留 ☰ / 搜索框 / ⋯，
+   其余动作收进 ⋯ 面板；按钮、输入框、目录行按手指尺寸放大，
+   表格在自己框里横向滑，别把整页撑宽。 */
+
+/* 只在窄屏出现的两个顶栏按钮（DOM 一直在，宽屏用 CSS 藏起来） */
+.topbar-burger,
+.topbar-more {
+  display: none;
+  justify-content: center;
+  min-width: 34px;
+  padding: 0 6px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.drawer-mask {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  :root {
+    --topbar-h: 48px;
+  }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .btn,
+  .tb-btn,
+  .menu-item,
+  .tree-row,
+  .search-hit {
+    touch-action: manipulation;
+  }
+
+  /* ---- 顶栏 ---- */
+  .topbar {
+    gap: 6px;
+    padding: 0 8px;
+  }
+
+  .brand-name {
+    display: none;
+  }
+
+  .topbar-burger,
+  .topbar-more {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* 版本号平时不占地方，后端出错时才露出来 */
+  .version {
+    display: none;
+  }
+
+  .version.is-error {
+    display: inline-block;
+    max-width: 34vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+  }
+
+  .topbar-right {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .search-input {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    font-size: 16px; /* ≥16px，iOS 聚焦时才不会自动放大 */
+  }
+
+  /* 动作区变成下拉面板：点 ⋯ 展开，竖排大按钮 */
+  .topbar-actions {
+    position: fixed;
+    top: var(--topbar-h);
+    right: 0;
+    left: 0;
+    z-index: 70;
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-2);
+  }
+
+  body.is-more-open .topbar-actions {
+    display: flex;
+  }
+
+  .topbar-actions .sep {
+    display: none;
+  }
+
+  .topbar-actions .btn,
+  .topbar-actions .menu-wrap,
+  .topbar-actions .menu-wrap > .btn {
+    width: 100%;
+  }
+
+  .topbar-actions .btn {
+    height: 40px;
+    justify-content: flex-start;
+    text-align: left;
+    font-size: 14px;
+  }
+
+  .topbar-actions .menu {
+    position: static;
+    min-width: 0;
+    margin-top: 6px;
+    box-shadow: none;
+  }
+
+  /* ---- 侧栏抽屉 ---- */
+  .shell-body {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: var(--topbar-h);
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: min(86vw, 330px);
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    box-shadow: var(--shadow-2);
+    transform: translateX(-102%);
+    transition: transform 0.18s ease;
+  }
+
+  body.is-drawer-open .sidebar {
+    transform: none;
+  }
+
+  /* 抽屉 / 面板打开时的遮罩，点一下收起 */
+  body.is-drawer-open .drawer-mask,
+  body.is-more-open .drawer-mask {
+    display: block;
+    position: fixed;
+    inset: var(--topbar-h) 0 0 0;
+    z-index: 55;
+    background: rgba(20, 24, 31, 0.34);
+  }
+
+  .tree-row {
+    height: 38px;
+    padding: 0 10px;
+  }
+
+  /* ---- 正文与阅读视图 ---- */
+  .page,
+  .doc-view {
+    padding: 12px 12px 40px;
+  }
+
+  .doc-header {
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+  }
+
+  .doc-title {
+    font-size: 18px;
+  }
+
+  .doc-body {
+    padding: 14px 14px 18px;
+  }
+
+  .prose {
+    font-size: 15px;
+  }
+
+  .prose th,
+  .prose td {
+    padding: 4px 6px;
+  }
+
+  /* 阅读视图的宽表格 / 长图：自己框里横滑 */
+  .prose:not(.tiptap) table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  /* ---- 编辑区 ---- */
+  .btn {
+    height: 36px;
+    padding: 0 12px;
+  }
+
+  .input {
+    height: 36px;
+    font-size: 16px;
+  }
+
+  .zt-toolbar {
+    gap: 5px;
+    padding: 6px;
+  }
+
+  .tb-btn {
+    min-width: 34px;
+    height: 32px;
+    font-size: 14px;
+  }
+
+  .tb-tablebar {
+    padding: 5px 6px;
+  }
+
+  .tb-tablebar .tb-btn {
+    height: 30px;
+  }
+
+  .tb-lang {
+    width: 72px;
+    font-size: 12px;
+  }
+
+  .zt-editor-scroll {
+    max-height: calc(100vh - 240px);
+    min-height: 240px;
+  }
+
+  @supports (height: 100dvh) {
+    .zt-editor-scroll {
+      max-height: calc(100dvh - 210px);
+    }
+  }
+
+  .zt-editor-body {
+    padding: 12px 12px 32px;
+  }
+
+  .zt-editor-body .tiptap,
+  .zt-editor-body .ProseMirror {
+    min-height: 200px;
+    font-size: 16px; /* 同上：避免 iOS 聚焦缩放 */
+  }
+
+  /* 编辑区的表格也自己横滑（单元格点击不受影响：DOM 结构不变） */
+  .zt-editor-body table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  /* ---- 弹窗 / 轻提示 ---- */
+  .modal {
+    width: 100%;
+  }
+
+  .modal-mask {
+    padding: 12px;
+  }
+
+  .modal-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .toast-root {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    align-items: stretch;
+  }
+
+  .toast {
+    max-width: none;
   }
 }
